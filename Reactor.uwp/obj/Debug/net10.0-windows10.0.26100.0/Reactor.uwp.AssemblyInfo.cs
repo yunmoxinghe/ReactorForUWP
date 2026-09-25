@@ -16,7 +16,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Reactor.uwp")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+65fa0a7376cf5bad1c0e3e8c91f5f33db1198385")]
 [assembly: System.Reflection.AssemblyProductAttribute("Reactor.uwp")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Reactor.uwp")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

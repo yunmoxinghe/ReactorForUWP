@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "2682ABqUkwM=",
+  "dgSpecHash": "scsE9af+A9o=",
   "success": true,
-  "projectFilePath": "D:\\fluentapps\\repos\\ReacroeForUWP\\UwpApp\\UwpApp.csproj",
+  "projectFilePath": "D:\\fluentapps\\repos\\test\\ReacroeForUWP\\UwpApp\\UwpApp.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\gold\\.nuget\\packages\\microsoft.dotnet.ilcompiler\\10.0.12\\microsoft.dotnet.ilcompiler.10.0.12.nupkg.sha512",
     "C:\\Users\\gold\\.nuget\\packages\\microsoft.net.illink.tasks\\10.0.12\\microsoft.net.illink.tasks.10.0.12.nupkg.sha512",

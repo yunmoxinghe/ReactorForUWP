@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "/GxHs0BuGjE=",
+  "dgSpecHash": "ilGfFeEH+Ac=",
   "success": true,
-  "projectFilePath": "D:\\fluentapps\\repos\\ReacroeForUWP\\Reactor.uwp\\Reactor.uwp.csproj",
+  "projectFilePath": "D:\\fluentapps\\repos\\test\\ReacroeForUWP\\Reactor.uwp\\Reactor.uwp.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\gold\\.nuget\\packages\\microsoft.net.illink.tasks\\10.0.12\\microsoft.net.illink.tasks.10.0.12.nupkg.sha512",
     "C:\\Users\\gold\\.nuget\\packages\\microsoft.netcore.app.runtime.win-x86\\10.0.12\\microsoft.netcore.app.runtime.win-x86.10.0.12.nupkg.sha512",
