@@ -1,0 +1,14 @@
+<Solution>
+  <Configurations>
+    <Platform Name="arm64" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="Reactor.uwp/Reactor.uwp.csproj" />
+  <Project Path="UwpApp/UwpApp.csproj">
+    <Platform Solution="*|arm64" Project="arm64" />
+    <Platform Solution="*|x64" Project="x64" />
+    <Platform Solution="*|x86" Project="x86" />
+    <Deploy />
+  </Project>
+</Solution>
