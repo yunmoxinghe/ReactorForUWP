@@ -14,7 +14,12 @@ public sealed class RenderContext
     private bool _isRendering;
     private Action? _requestRerender;
     private Func<bool>? _isMountedCheck;
-    private Func<ContextBase, object?>? _contextLookup;
+
+    /// <summary>
+    /// 由宿主注入的 Context 作用域（对齐官方 <c>RenderContext.BeginRender(ctx, scope)</c>）。
+    /// 元素树上的 <c>Provide</c> 由协调器在遍历时压栈，组件渲染期间从这里读取。
+    /// </summary>
+    private ContextScope? _contextScope;
 
     /// <summary>由宿主在首次渲染前注入：状态变化时请求重渲染。</summary>
     internal Action? RequestRerender
@@ -30,11 +35,18 @@ public sealed class RenderContext
         set => _isMountedCheck = value;
     }
 
-    /// <summary>开始一次渲染：重置 hook 下标并标记渲染中。</summary>
-    internal void BeginRender()
+    /// <summary>
+    /// 开始一次渲染：重置 hook 下标并标记渲染中。
+    /// <paramref name="contextScope"/> 为当前生效的 Context 作用域（可为 null）。
+    /// </summary>
+    internal void BeginRender(ContextScope? contextScope = null)
     {
         _hookIndex = 0;
         _isRendering = true;
+        if (contextScope is not null)
+        {
+            _contextScope = contextScope;
+        }
     }
 
     /// <summary>结束一次渲染：校验 hook 数量一致，执行待处理的 effect。</summary>
@@ -422,15 +434,16 @@ public sealed class RenderContext
 
         if (context is null) throw new ArgumentNullException(nameof(context));
 
-        var boxed = _contextLookup?.Invoke(context);
-        return boxed is T typed ? typed : context.DefaultValue;
+        // 沿组件链向上查找：由协调器在遍历时压栈的作用域提供。
+        // 没有注入作用域（例如脱离宿主的单元测试）时退化为默认值。
+        return _contextScope is null ? context.DefaultValue : _contextScope.Read(context);
     }
 
-    /// <summary>由宿主注入：沿组件链向上查找 Context 值。</summary>
-    internal Func<ContextBase, object?>? ContextLookup
+    /// <summary>由宿主注入/更新：当前生效的 Context 作用域。</summary>
+    internal ContextScope? ContextScope
     {
-        get => _contextLookup;
-        set => _contextLookup = value;
+        get => _contextScope;
+        set => _contextScope = value;
     }
 
     /// <summary>执行所有待处理的 effect（在渲染完成后调用）。</summary>

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Microsoft.UI.Reactor.Core;
@@ -22,25 +23,76 @@ public abstract partial class ReactorApplication : WindowsUIApplication,
     Windows.UI.Xaml.Markup.IXamlMetadataProvider
 {
     /// <summary>
-    /// MUX 控件的 XAML 元数据提供程序。没有 XAML 编译器生成的 App.g.i.cs 时，
-    /// WUX 框架在加载/套用 MUX 控件（如 InfoBar）时会向 Application 查询
-    /// IXamlMetadataProvider；不实现则所有 MUX 控件首次布局即原生崩溃
-    /// （0xc000027b / stowed E_FAIL），窗口只剩占位叉图。
+    /// 所有控件库的 XAML 元数据提供程序（按顺序查询，先命中者胜）。
     /// </summary>
-    private readonly Microsoft.UI.Xaml.XamlTypeInfo.XamlControlsXamlMetaDataProvider _xamlMetadata =
-        new();
+    /// <remarks>
+    /// <b>每个第三方控件库都必须在这里登记，否则其控件首次布局即原生崩溃。</b>
+    /// 有 XAML 编译器时，生成的 App.g.i.cs 会把所有引用库的 Provider 串起来；
+    /// 我们纯代码（无 App.xaml）没有这一层，只能自己串。
+    /// 漏登记的代价：控件 <c>new</c> 得出来、属性也设得上，但一轮到套用模板 /
+    /// 首次 Measure —— 框架按名字向 Application 查 <c>IXamlMetadataProvider</c>
+    /// 拿到 null —— 就抛不带托管堆栈的 COMException“未指定的错误”
+    /// （0x80004005），进程 fast-fail 退出 0xc000027b，
+    /// <c>UnhandledException</c> 里 <c>e.Handled = true</c> 也拦不住。
+    /// 症状与"集合投影写错"几乎一样，排查时先看这里。
+    /// </remarks>
+    private static readonly List<Windows.UI.Xaml.Markup.IXamlMetadataProvider> XamlMetadataProviders =
+        new()
+        {
+            // WinUI 2（MUX）：NavigationView / BreadcrumbBar / RadioButtons / InfoBar …
+            new Microsoft.UI.Xaml.XamlTypeInfo.XamlControlsXamlMetaDataProvider(),
+
+            // CommunityToolkit SettingsControls：SettingsCard / SettingsExpander。
+            // 类型名是 CsWinRT 给 WinRT 组件生成的（“Rns” + 下划线命名空间）。
+            new CommunityToolkit.WinUI.Controls.SettingsControlsRns
+                .CommunityToolkit_WinUI_Controls_SettingsControls_XamlTypeInfo
+                .XamlMetaDataProvider(),
+        };
+
+    /// <summary>登记额外的控件库元数据提供程序（必须在窗口内容创建前调用）。</summary>
+    public static void RegisterXamlMetadataProvider(
+        Windows.UI.Xaml.Markup.IXamlMetadataProvider provider)
+    {
+        if (provider is not null)
+        {
+            XamlMetadataProviders.Add(provider);
+        }
+    }
 
     /// <inheritdoc/>
-    public Windows.UI.Xaml.Markup.IXamlType GetXamlType(Type type) =>
-        _xamlMetadata.GetXamlType(type);
+    public Windows.UI.Xaml.Markup.IXamlType GetXamlType(Type type)
+    {
+        foreach (var provider in XamlMetadataProviders)
+        {
+            if (provider.GetXamlType(type) is { } found)
+            {
+                return found;
+            }
+        }
+
+        // 返回 null 是有意义的：XAML 用 null 表示"这个 Application 不认识该类型"。
+        return null!;
+    }
 
     /// <inheritdoc/>
-    public Windows.UI.Xaml.Markup.IXamlType GetXamlType(string fullName) =>
-        _xamlMetadata.GetXamlType(fullName);
+    public Windows.UI.Xaml.Markup.IXamlType GetXamlType(string fullName)
+    {
+        foreach (var provider in XamlMetadataProviders)
+        {
+            if (provider.GetXamlType(fullName) is { } found)
+            {
+                return found;
+            }
+        }
+
+        return null!;
+    }
 
     /// <inheritdoc/>
     public Windows.UI.Xaml.Markup.XmlnsDefinition[] GetXmlnsDefinitions() =>
-        _xamlMetadata.GetXmlnsDefinitions();
+        XamlMetadataProviders
+            .SelectMany(provider => provider.GetXmlnsDefinitions() ?? Array.Empty<Windows.UI.Xaml.Markup.XmlnsDefinition>())
+            .ToArray();
 
     /// <summary>创建根组件。</summary>
     protected abstract Component CreateRootComponent();
@@ -48,9 +100,78 @@ public abstract partial class ReactorApplication : WindowsUIApplication,
     /// <summary>全局未处理异常处理器：完整托管堆栈落盘（含递归的 InnerException）。</summary>
     private void OnUnhandledException(object sender, Windows.UI.Xaml.UnhandledExceptionEventArgs e)
     {
-        // 先把堆栈同步 flush 落盘，再让它按默认流程崩溃退出。
-        // 不设置 e.Handled（保持 false）：吞异常会让 UI 留在不一致状态、进程挂起变僵尸锁文件。
-        Trace("UNHANDLED EXCEPTION: " + Flatten(e.Exception));
+        // 先把堆栈同步 flush 落盘，再决定要不要让它按默认流程崩溃退出。
+        Trace($"UNHANDLED EXCEPTION 0x{e.Exception.HResult:X8}: " + Flatten(e.Exception));
+
+        // 原生 XAML（布局 / 渲染 / SetTitleBar 等）抛出来的 COMException 常常
+        // 不带任何托管堆栈——日志里只有一个 “未指定的错误”，等于没有线索，
+        // 而且 UWP 一旦走到未处理异常就直接终止进程（0xc000027b），
+        // 一次运行只能暴露一个问题。诊断期间对这类异常先吞掉（去重、限量），
+        // 让进程活着，好在同一次运行里收集到后续信息。
+        // 诊断期曾在这里吞掉异常（e.Handled = true）以换取同一次运行里多收集一点线索。
+        // 崩溃根因已定位（第三方控件库漏登记 XamlMetadataProvider），恢复默认行为：不吞。
+        Trace(DumpVisualTree());
+    }
+
+    /// <summary>
+    /// 诊断用：把窗口可视树打成缩进文本。
+    /// 原生异常（典型是“已指定错误的 E_FAIL”，如重复挂载、控件缺模板）
+    /// 没有任何托管堆栈，只能靠这棵树定位是哪个控件出的问题。
+    /// </summary>
+    private static string DumpVisualTree()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("[reactor] 可视树快照:");
+
+        void Walk(Windows.UI.Xaml.DependencyObject? node, int depth, int index)
+        {
+            if (node is null || depth > 30 || sb.Length > 40000)
+            {
+                return;
+            }
+
+            var name = node.GetType().Name;
+            var extra = string.Empty;
+
+            if (node is Windows.UI.Xaml.FrameworkElement fe)
+            {
+                if (!string.IsNullOrEmpty(fe.Name))
+                {
+                    name = $"{fe.Name}:{name}";
+                }
+
+                if (fe.Visibility != Windows.UI.Xaml.Visibility.Visible)
+                {
+                    extra = $" <{fe.Visibility}>";
+                }
+            }
+
+            sb.AppendLine($"  {new string(' ', depth * 2)}[{index}] {name}{extra}");
+
+            try
+            {
+                var count = Windows.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(node);
+                for (var i = 0; i < count; i++)
+                {
+                    Walk(Windows.UI.Xaml.Media.VisualTreeHelper.GetChild(node, i), depth + 1, i);
+                }
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine($"  {new string(' ', depth * 2)}<遍历中断: {ex.Message}>");
+            }
+        }
+
+        try
+        {
+            Walk(Windows.UI.Xaml.Window.Current?.Content, 0, 0);
+        }
+        catch (Exception ex)
+        {
+            sb.AppendLine($"<无法遍历: {ex.Message}>");
+        }
+
+        return sb.ToString();
     }
 
     private static string Flatten(Exception? ex)
@@ -100,10 +221,45 @@ public abstract partial class ReactorApplication : WindowsUIApplication,
     /// 材质只出现在内容区。做法与 UWP 模板一致：扩展视图进标题栏 +
     /// 把标题栏按钮背景设为透明，再用根 Frame 的 Padding 把内容压回标题栏下方。
     /// </summary>
+    private static Windows.UI.Xaml.Controls.Frame? _rootFrame;
+    private static bool _ownsTitleBar;
+
+    // 页面声明"我自己管理标题栏"时（根元素上的 .OwnsTitleBar()），
+    // 宿主不再自动下压——否则模板式布局会被下压两次（宿主 32px + 页面 32px）。
+    internal static void SetOwnsTitleBar(bool owns)
+    {
+        if (_ownsTitleBar == owns)
+        {
+            return;
+        }
+
+        _ownsTitleBar = owns;
+        UpdateTitleBarPadding();
+    }
+
+    private static void UpdateTitleBarPadding()
+    {
+        if (_rootFrame is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var height = CoreApplication.GetCurrentView().TitleBar.Height;
+            _rootFrame.Padding = _ownsTitleBar ? new Thickness(0) : new Thickness(0, height, 0, 0);
+        }
+        catch (Exception ex)
+        {
+            Trace("UpdateTitleBarPadding failed: " + ex.Message);
+        }
+    }
+
     private static void ExtendIntoTitleBar(Windows.UI.Xaml.Controls.Frame root)
     {
         try
         {
+            _rootFrame = root;
             var coreTitleBar = CoreApplication.GetCurrentView().TitleBar;
             coreTitleBar.ExtendViewIntoTitleBar = true;
 
@@ -114,9 +270,8 @@ public abstract partial class ReactorApplication : WindowsUIApplication,
 
             // Frame 的模板把 Padding 绑到 ContentPresenter，
             // 所以顶栏高度走 Padding：材质仍然铺满整窗，内容被压到标题栏下面。
-            void Apply() => root.Padding = new Thickness(0, coreTitleBar.Height, 0, 0);
-            Apply();
-            coreTitleBar.LayoutMetricsChanged += (_, _) => Apply();
+            UpdateTitleBarPadding();
+            coreTitleBar.LayoutMetricsChanged += (_, _) => UpdateTitleBarPadding();
         }
         catch (Exception ex)
         {

@@ -7,18 +7,31 @@ using Windows.UI.Xaml.Automation;
 using Windows.UI.Xaml.Controls;
 using Windows.UI.Xaml.Controls.Primitives;
 using Windows.UI.Xaml.Media;
-using MuxControls = Microsoft.UI.Xaml.Controls;
 
 namespace Reactor.Uwp.Internal;
 
 /// <summary>
 /// 把 <see cref="Element"/> 描述树映射到真实 XAML 控件：
-/// mount 时按 Element 类型创建控件；update 时同类型就地改属性、
+/// mount 时按元素类型创建控件；update 时同类型就地改属性、
 /// 容器子节点按位置对齐复用，类型不同才替换。
 /// 每个 ReactorHost 持有一个实例（保存事件处理器映射）。
 /// </summary>
+/// <remarks>
+/// 元素 → 控件的映射全部走 <see cref="ElementHandlerRegistry"/> 查表，
+/// 新增元素只需加一个 handler + 一行注册，不需要改动本文件的任何 switch。
+/// </remarks>
 internal sealed class Reconciler
 {
+    private static readonly Action NoopRerender = () => { };
+
+    /// <summary>已经报过"没有 Padding 属性"的原生类型（见 <see cref="ApplyPadding"/>）。</summary>
+    private static readonly HashSet<Type> UnsupportedPaddingTypes = new();
+
+    static Reconciler()
+    {
+        ElementHandlerRegistry.RegisterBuiltIns();
+    }
+
     /// <summary>
     /// 是否正处于一轮渲染 / patch 中。
     /// </summary>
@@ -34,6 +47,18 @@ internal sealed class Reconciler
     /// </remarks>
     private bool _inRenderPass;
 
+    /// <summary>
+    /// 当前是否处于一轮渲染 / patch 中（宿主与子组件共用同一把锁）。
+    /// </summary>
+    /// <remarks>
+    /// 必须由宿主在整轮渲染时也置位：否则宿主驱动渲染期间，控件事件同步回调
+    /// 触发的子组件状态更新会被判定为"非重入"而立刻执行，内外两层 patch 交错。
+    /// </remarks>
+    internal bool InRenderPass => _inRenderPass;
+
+    /// <summary>遍历期生效的 Context 作用域（对齐官方 Reconciler._contextScope）。</summary>
+    private readonly ContextScope _contextScope = new();
+
     private readonly Dictionary<Button, RoutedEventHandler> _buttonClicks = new();
     private readonly Dictionary<Border, ComponentNode> _componentNodes = new();
     private readonly Dictionary<TextBox, TextChangedEventHandler> _textChanged = new();
@@ -41,35 +66,342 @@ internal sealed class Reconciler
     private readonly Dictionary<CheckBox, RoutedEventHandler> _checkBoxUnchecked = new();
     private readonly Dictionary<Slider, RangeBaseValueChangedEventHandler> _sliderValueChanged = new();
 
-    public UIElement Build(Element element)
+    /// <summary>构建失败、被替换成占位块的原生控件（见 <see cref="Build"/>）。</summary>
+    private readonly HashSet<UIElement> _failedBuilds = new();
+
+    // ── 元素 → 控件 分发 ────────────────────────────────────────
+
+    internal UIElement Build(Element element)
     {
-        UIElement native = element switch
+        using var scope = PushContext(element);
+
+        // 挂载期：修饰值一律无条件写成本地值（原因见 PropWriter 类顶注释）。
+        // 必须包住 handler.Mount——子元素是在它里面递归 Build 的。
+        using var mount = PropWriter.BeginMount();
+
+        // 诊断期：崩溃前最后一个 build 的元素就是嫌疑区域
+        // （原生异常没有托管堆栈，只能靠这个序列反推）。
+        Hosting.ReactorApplication.Trace($"[reactor] build {element.GetType().Name}");
+
+        UIElement native;
+        if (element is ComponentElement comp)
         {
-            TextBlockElement text => new TextBlock { Text = text.Content },
-            ButtonElement button => BuildButton(button),
-            StackElement stack => BuildStack(stack),
-            // EmptyElement 在官方实现里对应 null（不产生控件）；UWP 侧 Build 必须返回
-            // UIElement，因此退化为一个零尺寸的 Grid 占位。
-            EmptyElement => new Grid(),
-            GroupElement group => BuildGroup(group),
-            InfoBarElement infoBar => new MuxControls.InfoBar
+            native = BuildComponent(comp);
+        }
+        else if (ElementHandlerRegistry.TryGet(element.GetType(), out var handler))
+        {
+            try
             {
-                Message = infoBar.Message,
-                Severity = infoBar.Severity,
-                IsOpen = true
-            },
-            TextBoxElement textBox => BuildTextBox(textBox),
-            CheckBoxElement checkBox => BuildCheckBox(checkBox),
-            SliderElement slider => BuildSlider(slider),
-            ScrollViewerElement scroll => BuildScroll(scroll),
-            ComponentElement comp => BuildComponent(comp),
-            _ => throw new NotSupportedException(
-                $"不支持的元素类型: {element.GetType().FullName}")
-        };
+                native = handler.Mount(this, element, NoopRerender);
+            }
+            catch (Exception ex)
+            {
+                // 一个元素的 WinRT 投影踩雷（典型是集合/对象属性不被接受）不该拖垮整个进程：
+                // UWP 里未处理异常 = 进程直接终止，用户只看到"应用崩溃"。
+                // 这里降级成可见的占位块 + 日志，页面其余部分照常渲染。
+                Hosting.ReactorApplication.Trace(
+                    $"[reactor] 元素构建失败 {element.GetType().Name}: {ex.Message}");
+                _failedBuilds.Add(native = BuildFailure(element.GetType().Name, ex.Message));
+            }
+        }
+        else
+        {
+            throw new NotSupportedException(
+                $"不支持的元素类型: {element.GetType().FullName}");
+        }
 
         ApplyModifiers(native, element.Modifiers);
         return native;
     }
+
+    private static UIElement BuildFailure(string elementName, string message) =>
+        new Border
+        {
+            Padding = new Thickness(6, 4, 6, 4),
+            Background = new SolidColorBrush(Windows.UI.Colors.OrangeRed) { Opacity = 0.15 },
+            Child = new TextBlock
+            {
+                Text = $"[构建失败] {elementName}: {message}",
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = new SolidColorBrush(Windows.UI.Colors.OrangeRed),
+            },
+        };
+
+    /// <summary>
+    /// 构建图标（SettingsCard / Expander 的 <c>HeaderIcon</c> 只接受
+    /// <see cref="IconElement"/>，不能塞任意 UIElement）。
+    /// 非图标元素返回 null，宿主静默降级为无图标。
+    /// </summary>
+    internal static IconElement? BuildIcon(Reconciler reconciler, Element? element) =>
+        element is null ? null : reconciler.Build(element) as IconElement;
+
+    /// <summary>
+    /// 将旧描述对应的真实控件就地更新为新描述。
+    /// 调用方需保证 old/next 是同一 Element 记录类型。
+    /// </summary>
+    internal void Patch(UIElement native, Element old, Element next)
+    {
+        using var scope = PushContext(next);
+
+        try
+        {
+            PatchCore(native, old, next);
+        }
+        catch (Exception ex)
+        {
+            // patch 期异常同样会终止进程，而堆栈里只有 handler 内部帧，
+            // 看不出是哪一类元素；这里补一条定位日志再原样抛出。
+            Hosting.ReactorApplication.Trace(
+                $"[reactor] patch 失败: {old.GetType().Name} -> {next.GetType().Name} " +
+                $"(native={native.GetType().Name}) - {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
+            throw;
+        }
+    }
+
+    private void PatchCore(UIElement native, Element old, Element next)
+    {
+        if (_failedBuilds.Contains(native))
+        {
+            // 上一次构建就失败过，占位块不是真实控件，没法就地 patch。
+            // 保持占位（已记日志），避免二次抛异常把进程带崩。
+            return;
+        }
+
+        if (next is ComponentElement nextComp)
+        {
+            if (native is not Border wrapper)
+            {
+                throw new NotSupportedException(
+                    $"组件元素必须挂在 Border 上，实际是 {native.GetType().FullName}");
+            }
+
+            PatchComponent(wrapper, nextComp);
+        }
+        else if (ElementHandlerRegistry.TryGet(next.GetType(), out var handler) &&
+                 handler.TryUpdate(this, old, next, native, NoopRerender))
+        {
+            // handler 已就地完成更新
+        }
+        else
+        {
+            throw new NotSupportedException(
+                $"无法更新控件 {native.GetType().FullName} -> {next.GetType().FullName}");
+        }
+
+        ApplyModifiers(native, next.Modifiers);
+    }
+
+    /// <summary>两个描述是否可以复用同一个真实控件（目前按记录类型判断）。</summary>
+    internal static bool CanPatch(Element? old, Element? next) =>
+        old is not null && next is not null && old.GetType() == next.GetType();
+
+    // ── 供 handler 递归使用的内部入口 ────────────────────────────
+
+    /// <summary>构建 Panel 的全部子节点，并应用容器附加属性（Grid 行列等）。</summary>
+    internal void BuildChildren(Panel panel, Element parentElement, IReadOnlyList<Element?> children)
+    {
+        foreach (var child in NonNull(children))
+        {
+            var childNative = Build(child);
+            panel.Children.Add(childNative);
+            AttachChild(parentElement, panel, childNative, child);
+        }
+    }
+
+    /// <summary>就地 patch Panel 的子节点序列。</summary>
+    internal void PatchPanelChildren(
+        Panel panel,
+        Element parentElement,
+        IReadOnlyList<Element?> oldChildren,
+        IReadOnlyList<Element?> nextChildren)
+    {
+        PatchChildrenCore(panel, oldChildren, nextChildren);
+
+        // 附加属性（Grid 行列）每次都要重刷：子节点可能被重排/复用。
+        var kids = NonNull(nextChildren);
+        var count = Math.Min(panel.Children.Count, kids.Count);
+        for (var i = 0; i < count; i++)
+        {
+            AttachChild(parentElement, panel, panel.Children[i], kids[i]);
+        }
+    }
+
+    /// <summary>
+    /// 单子元素容器（ContentControl / Border）的子节点 patch：
+    /// 同类型就地 patch，不同类型或结构变化则卸载重建。
+    /// </summary>
+    internal void PatchSingleChild(UIElement container, Element? oldChild, Element? newChild)
+    {
+        Func<UIElement?> getter;
+        Action<UIElement?> setter;
+
+        if (container is ContentControl contentControl)
+        {
+            getter = () => contentControl.Content as UIElement;
+            setter = value => contentControl.Content = value;
+        }
+        else if (container is Border border)
+        {
+            getter = () => border.Child;
+            setter = value => border.Child = value;
+        }
+        else if (SingleChildAccessor.TryGet(container, out getter, out setter))
+        {
+            // 第三方容器（Toolkit SettingsExpander 等）自己登记的访问器，见该类的注释。
+        }
+        else
+        {
+            // 未知容器类型：静默 return 会让"整棵子树永远不更新"这类问题极难发现，
+            // 这里显式留痕。
+            Hosting.ReactorApplication.Trace(
+                $"[reactor] 单子元素容器不支持就地更新: {container.GetType().FullName}");
+            return;
+        }
+
+        var current = getter();
+
+        if (newChild is null)
+        {
+            if (current is not null)
+            {
+                UnmountNative(current, oldChild ?? EmptyElement.Instance);
+                setter(null);
+            }
+
+            return;
+        }
+
+        if (current is null)
+        {
+            setter(Build(newChild));
+            return;
+        }
+
+        if (oldChild is not null && CanPatch(oldChild, newChild))
+        {
+            Patch(current, oldChild, newChild);
+            return;
+        }
+
+        if (oldChild is not null)
+        {
+            UnmountNative(current, oldChild);
+        }
+
+        setter(Build(newChild));
+    }
+
+    /// <summary>ItemsControl（ListView / GridView）的条目 patch。</summary>
+    internal void PatchItems(
+        ItemsControl control,
+        IReadOnlyList<Element?> oldItems,
+        IReadOnlyList<Element?> newItems)
+    {
+        var oldKids = NonNull(oldItems);
+        var newKids = NonNull(newItems);
+
+        var canPatchInPlace = oldKids.Count == newKids.Count && control.Items.Count == oldKids.Count;
+        if (canPatchInPlace)
+        {
+            for (var i = 0; i < oldKids.Count; i++)
+            {
+                if (!CanPatch(oldKids[i], newKids[i]))
+                {
+                    canPatchInPlace = false;
+                    break;
+                }
+            }
+        }
+
+        if (canPatchInPlace)
+        {
+            for (var i = 0; i < oldKids.Count; i++)
+            {
+                if (control.Items[i] is UIElement native)
+                {
+                    Patch(native, oldKids[i], newKids[i]);
+                }
+            }
+
+            return;
+        }
+
+        for (var i = control.Items.Count - 1; i >= 0; i--)
+        {
+            if (control.Items[i] is UIElement native)
+            {
+                UnmountNative(native, i < oldKids.Count ? oldKids[i] : EmptyElement.Instance);
+            }
+        }
+
+        control.Items.Clear();
+        foreach (var kid in newKids)
+        {
+            control.Items.Add(Build(kid));
+        }
+    }
+
+    private void AttachChild(Element parentElement, UIElement parent, UIElement child, Element childElement)
+    {
+        if (childElement.Modifiers?.Grid is null)
+        {
+            return;
+        }
+
+        if (ElementHandlerRegistry.TryGet(parentElement.GetType(), out var handler))
+        {
+            handler.AttachChild(parent, child, childElement);
+        }
+    }
+
+    // ── Context 作用域 ──────────────────────────────────────────
+
+    /// <summary>进入带 <c>Provide</c> 值的元素时压栈，离开时弹栈。</summary>
+    private IDisposable PushContext(Element element)
+    {
+        var values = element.Modifiers?.ContextValues;
+        if (values is null || values.Count == 0)
+        {
+            return NullScope.Instance;
+        }
+
+        return new ContextPop(_contextScope, _contextScope.Push(values));
+    }
+
+    private sealed class NullScope : IDisposable
+    {
+        public static readonly NullScope Instance = new();
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed class ContextPop : IDisposable
+    {
+        private readonly ContextScope _scope;
+        private readonly int _count;
+        private bool _disposed;
+
+        public ContextPop(ContextScope scope, int count)
+        {
+            _scope = scope;
+            _count = count;
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            _scope.Pop(_count);
+        }
+    }
+
+    // ── 组件 ────────────────────────────────────────────────────
 
     /// <summary>挂载一个子组件：创建 Border 锚点、ComponentNode，并独立渲染子树。</summary>
     private Border BuildComponent(ComponentElement compElement)
@@ -137,22 +469,7 @@ internal sealed class Reconciler
                         return;
                     }
 
-                    node.Instance.BeginRender();
-                    var nextElement = node.Instance.Render();
-                    node.Instance.EndRender();
-
-                    if (node.CurrentElement is null ||
-                        wrapper.Child is not UIElement childNative ||
-                        !CanPatch(node.CurrentElement, nextElement))
-                    {
-                        wrapper.Child = Build(nextElement);
-                    }
-                    else
-                    {
-                        Patch(childNative, node.CurrentElement, nextElement);
-                    }
-
-                    node.CurrentElement = nextElement;
+                    RenderComponentTree(node, wrapper);
                 });
             }
         }
@@ -160,15 +477,39 @@ internal sealed class Reconciler
         component.Context.RequestRerender = RequestComponentRerender;
         component.Context.IsMountedCheck = () => node.IsMounted;
 
-        // 首次渲染子组件
-        node.Instance.BeginRender();
-        var childElement = node.Instance.Render();
-        node.Instance.EndRender();
-
-        wrapper.Child = Build(childElement);
-        node.CurrentElement = childElement;
+        // 首次渲染子组件：先把祖先提供的 Context 固化到节点上，
+        // 之后（可能异步）重渲染时仍然能读到。
+        node.ContextScope.ReplaceWith(_contextScope);
+        RenderComponentTree(node, wrapper);
 
         return wrapper;
+    }
+
+    /// <summary>渲染（或重渲染）一个组件的子树，并把结果落到 wrapper.Child。</summary>
+    private void RenderComponentTree(ComponentNode node, Border wrapper)
+    {
+        node.Instance.BeginRender(node.ContextScope);
+        var nextElement = node.Instance.Render();
+        node.Instance.EndRender();
+
+        if (node.CurrentElement is null ||
+            wrapper.Child is not UIElement childNative ||
+            !CanPatch(node.CurrentElement, nextElement))
+        {
+            // 整子树替换前，先清理旧子树（事件解绑 + 嵌套组件 cleanup）
+            if (wrapper.Child is UIElement oldChild && node.CurrentElement is not null)
+            {
+                UnmountNative(oldChild, node.CurrentElement);
+            }
+
+            wrapper.Child = Build(nextElement);
+        }
+        else
+        {
+            Patch(childNative, node.CurrentElement, nextElement);
+        }
+
+        node.CurrentElement = nextElement;
     }
 
     /// <summary>
@@ -181,17 +522,7 @@ internal sealed class Reconciler
         {
             // 防御：组件节点丢失（不应发生），重建
             var newWrapper = BuildComponent(nextComp);
-            wrapper.Child = newWrapper.Child;
-            if (newWrapper.Child is not null)
-            {
-                // 转移注册表
-                if (_componentNodes.TryGetValue(newWrapper, out var newNode))
-                {
-                    _componentNodes.Remove(newWrapper);
-                    newNode.NativeRoot = wrapper;
-                    _componentNodes[wrapper] = newNode;
-                }
-            }
+            TransferNode(newWrapper, wrapper);
             return;
         }
 
@@ -203,15 +534,12 @@ internal sealed class Reconciler
             _componentNodes.Remove(wrapper);
 
             var newWrapper = BuildComponent(nextComp);
-            wrapper.Child = newWrapper.Child;
-            if (_componentNodes.TryGetValue(newWrapper, out var newNode))
-            {
-                _componentNodes.Remove(newWrapper);
-                newNode.NativeRoot = wrapper;
-                _componentNodes[wrapper] = newNode;
-            }
+            TransferNode(newWrapper, wrapper);
             return;
         }
+
+        // 父树可能新增/修改了 Provide，先把最新的 Context 固化下来
+        node.ContextScope.ReplaceWith(_contextScope);
 
         // 同类型：更新 props，按 ShouldUpdate 决定是否重渲染子树
         var oldProps = node.Props;
@@ -233,11 +561,23 @@ internal sealed class Reconciler
         // props 相等：跳过重渲染（子组件只响应自己的 state）
     }
 
+    /// <summary>把重建出来的组件节点挂回原 wrapper（保持视觉树位置不变）。</summary>
+    private void TransferNode(Border newWrapper, Border wrapper)
+    {
+        wrapper.Child = newWrapper.Child;
+        if (_componentNodes.TryGetValue(newWrapper, out var newNode))
+        {
+            _componentNodes.Remove(newWrapper);
+            newNode.NativeRoot = wrapper;
+            _componentNodes[wrapper] = newNode;
+        }
+    }
+
     /// <summary>
     /// 执行一轮渲染 / patch，并把 <see cref="_inRenderPass"/> 置位，
     /// 使过程中同步触发的状态更新被推迟而不是重入。
     /// </summary>
-    private void RunPass(Action pass)
+    internal void RunPass(Action pass)
     {
         var wasInPass = _inRenderPass;
         _inRenderPass = true;
@@ -259,258 +599,12 @@ internal sealed class Reconciler
             return;
         }
 
-        RunPass(() => RerenderComponentCore(node, wrapper));
+        RunPass(() => RenderComponentTree(node, wrapper));
     }
 
-    private void RerenderComponentCore(ComponentNode node, Border wrapper)
-    {
-        node.Instance.BeginRender();
-        var nextElement = node.Instance.Render();
-        node.Instance.EndRender();
+    // ── 子节点 diff ─────────────────────────────────────────────
 
-        if (node.CurrentElement is null || wrapper.Child is not UIElement childNative ||
-            !CanPatch(node.CurrentElement, nextElement))
-        {
-            // 整子树替换前，先清理旧子树（事件解绑 + 嵌套组件 cleanup）
-            if (wrapper.Child is UIElement oldChild && node.CurrentElement is not null)
-            {
-                UnmountNative(oldChild, node.CurrentElement);
-            }
-            wrapper.Child = Build(nextElement);
-        }
-        else
-        {
-            Patch(childNative, node.CurrentElement, nextElement);
-        }
-
-        node.CurrentElement = nextElement;
-    }
-
-    /// <summary>
-    /// 将旧描述对应的真实控件就地更新为新描述。
-    /// 调用方需保证 old/next 是同一 Element 记录类型。
-    /// </summary>
-    public void Patch(UIElement native, Element old, Element next)
-    {
-        switch (native)
-        {
-            case TextBlock text when next is TextBlockElement nextText:
-                text.Text = nextText.Content;
-                break;
-
-            case Button button when next is ButtonElement nextButton:
-                button.Content = nextButton.Label;
-                RebindButtonClick(button, nextButton.OnClick);
-                break;
-
-            case StackPanel panel when next is StackElement nextStack:
-                panel.Orientation = nextStack.Orientation;
-                if (nextStack.Spacing is { } spacing)
-                {
-                    panel.Spacing = spacing;
-                }
-
-                PatchChildren(panel, ((StackElement)old).Children, nextStack.Children);
-                break;
-
-            case Grid grid when next is GroupElement nextGroup:
-                PatchChildren(grid, ((GroupElement)old).Children, nextGroup.Children);
-                break;
-
-            case Grid when next is EmptyElement:
-                // 占位元素，无需更新。
-                break;
-
-            case MuxControls.InfoBar infoBar when next is InfoBarElement nextInfo:
-                infoBar.Message = nextInfo.Message;
-                infoBar.Severity = nextInfo.Severity;
-                infoBar.IsOpen = true;
-                break;
-
-            case TextBox textBox when next is TextBoxElement nextTextBox:
-                textBox.PlaceholderText = nextTextBox.PlaceholderText;
-                textBox.Header = nextTextBox.Header;
-                if (nextTextBox.Value.HasValue && textBox.Text != nextTextBox.Value.Value)
-                {
-                    textBox.Text = nextTextBox.Value.Value ?? string.Empty;
-                }
-                RebindTextChanged(textBox, nextTextBox.OnChanged);
-                break;
-
-            case CheckBox checkBox when next is CheckBoxElement nextCheck:
-                checkBox.Content = nextCheck.Label;
-                if (nextCheck.IsChecked.HasValue && checkBox.IsChecked != nextCheck.IsChecked.Value)
-                {
-                    checkBox.IsChecked = nextCheck.IsChecked.Value;
-                }
-                RebindCheckBox(checkBox, nextCheck.OnIsCheckedChanged);
-                break;
-
-            case Slider slider when next is SliderElement nextSlider:
-                slider.Minimum = nextSlider.Min;
-                slider.Maximum = nextSlider.Max;
-                if (nextSlider.Value.HasValue && slider.Value != nextSlider.Value.Value)
-                {
-                    slider.Value = nextSlider.Value.Value;
-                }
-                RebindSlider(slider, nextSlider.OnValueChanged);
-                break;
-
-            case ScrollViewer scrollViewer when next is ScrollViewerElement nextScroll:
-                PatchScrollContent(
-                    scrollViewer,
-                    ((ScrollViewerElement)old).Child,
-                    nextScroll.Child);
-                break;
-
-            case Border wrapper when next is ComponentElement nextComp:
-                PatchComponent(wrapper, nextComp);
-                break;
-
-            default:
-                throw new NotSupportedException(
-                    $"无法更新控件 {native.GetType().FullName} -> {next.GetType().FullName}");
-        }
-
-        ApplyModifiers(native, next.Modifiers);
-    }
-
-    /// <summary>两个描述是否可以复用同一个真实控件（目前按记录类型判断）。</summary>
-    public static bool CanPatch(Element? old, Element? next) =>
-        old is not null && next is not null && old.GetType() == next.GetType();
-
-    private Button BuildButton(ButtonElement button)
-    {
-        var native = new Button { Content = button.Label };
-        RebindButtonClick(native, button.OnClick);
-        return native;
-    }
-
-    private StackPanel BuildStack(StackElement stack)
-    {
-        var panel = new StackPanel { Orientation = stack.Orientation };
-        if (stack.Spacing is { } spacing)
-        {
-            panel.Spacing = spacing;
-        }
-
-        foreach (var child in NonNull(stack.Children))
-        {
-            panel.Children.Add(Build(child));
-        }
-
-        return panel;
-    }
-
-    /// <summary>GroupElement 渲染为裸 Grid：不引入额外布局策略。</summary>
-    private Grid BuildGroup(GroupElement group)
-    {
-        var grid = new Grid();
-        foreach (var child in NonNull(group.Children))
-        {
-            grid.Children.Add(Build(child));
-        }
-
-        return grid;
-    }
-
-    private TextBox BuildTextBox(TextBoxElement textBox)
-    {
-        var native = new TextBox
-        {
-            PlaceholderText = textBox.PlaceholderText,
-            Header = textBox.Header,
-        };
-
-        if (textBox.Value.HasValue)
-        {
-            native.Text = textBox.Value.Value ?? string.Empty;
-        }
-
-        RebindTextChanged(native, textBox.OnChanged);
-        return native;
-    }
-
-    private CheckBox BuildCheckBox(CheckBoxElement checkBox)
-    {
-        var native = new CheckBox { Content = checkBox.Label };
-
-        if (checkBox.IsChecked.HasValue)
-        {
-            native.IsChecked = checkBox.IsChecked.Value;
-        }
-
-        RebindCheckBox(native, checkBox.OnIsCheckedChanged);
-        return native;
-    }
-
-    private Slider BuildSlider(SliderElement slider)
-    {
-        var native = new Slider
-        {
-            Minimum = slider.Min,
-            Maximum = slider.Max,
-        };
-
-        if (slider.Value.HasValue)
-        {
-            native.Value = slider.Value.Value;
-        }
-
-        RebindSlider(native, slider.OnValueChanged);
-        return native;
-    }
-
-    private ScrollViewer BuildScroll(ScrollViewerElement scroll)
-    {
-        var native = new ScrollViewer
-        {
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-        };
-
-        if (scroll.Child is not null)
-        {
-            native.Content = Build(scroll.Child);
-        }
-
-        return native;
-    }
-
-    /// <summary>就地更新 ScrollViewer 的单个 Content（同类型就地 patch，否则卸载重建）。</summary>
-    private void PatchScrollContent(ScrollViewer scrollViewer, Element? oldContent, Element? newContent)
-    {
-        if (newContent is null)
-        {
-            if (scrollViewer.Content is UIElement existing)
-            {
-                UnmountNative(existing, oldContent!);
-                scrollViewer.Content = null;
-            }
-
-            return;
-        }
-
-        if (scrollViewer.Content is not UIElement childNative)
-        {
-            scrollViewer.Content = Build(newContent);
-        }
-        else if (oldContent is not null && CanPatch(oldContent, newContent))
-        {
-            Patch(childNative, oldContent, newContent);
-        }
-        else
-        {
-            if (oldContent is not null)
-            {
-                UnmountNative(childNative, oldContent);
-            }
-
-            scrollViewer.Content = Build(newContent);
-        }
-    }
-
-    private void PatchChildren(
+    private void PatchChildrenCore(
         Panel panel,
         IReadOnlyList<Element?> oldChildren,
         IReadOnlyList<Element?> nextChildren)
@@ -599,8 +693,6 @@ internal sealed class Reconciler
             }
         }
 
-        // 收集所有需要保留的原生控件（key 匹配 + 位置对齐）
-        var toRemove = new HashSet<UIElement>(panel.Children);
         var newNatives = new UIElement?[newKids.Count];
 
         // 处理 key 匹配的子节点
@@ -609,7 +701,6 @@ internal sealed class Reconciler
             if (oldKeyed.TryGetValue(key, out var oldPair))
             {
                 oldKeyed.Remove(key); // 一个 old key 只匹配一次，重复 key 走新增分支，避免同一原生控件复用两次导致越界
-                toRemove.Remove(oldPair.Native);
 
                 if (CanPatch(oldPair.Element, newEl))
                 {
@@ -638,7 +729,6 @@ internal sealed class Reconciler
             if (i < oldUnkeyed.Count)
             {
                 var oldPair = oldUnkeyed[i];
-                toRemove.Remove(oldPair.Native);
 
                 if (CanPatch(oldPair.Element, newEl))
                 {
@@ -657,58 +747,106 @@ internal sealed class Reconciler
             }
         }
 
-        // 卸载并移除所有未被复用的控件（真正删除/替换的，detach 是必要的）
+        // 目标顺序（与 newKids 一一对应）。理论上不会有 null，这里兜底补建；
+        // 同一个原生控件绝不能落在两个位置上 —— XAML 会抛"已有逻辑父级"。
+        var finalOrder = new List<UIElement>(newNatives.Length);
+        var used = new HashSet<UIElement>();
+        for (var i = 0; i < newNatives.Length; i++)
+        {
+            var target = newNatives[i];
+            if (target is null || !used.Add(target))
+            {
+                target = Build(newKids[i]);
+                newNatives[i] = target;
+                used.Add(target);
+            }
+
+            finalOrder.Add(target);
+        }
+
+        // 移除不再需要的控件：按"目标需求的份数"保留，
+        // 富余的重复副本（原生树已错位的残留）也会被一并清掉。
+        var needed = new Dictionary<UIElement, int>();
+        foreach (var target in finalOrder)
+        {
+            needed[target] = needed.TryGetValue(target, out var n) ? n + 1 : 1;
+        }
+
         for (var i = panel.Children.Count - 1; i >= 0; i--)
         {
             var child = panel.Children[i];
-            if (toRemove.Contains(child))
+            if (needed.TryGetValue(child, out var remaining) && remaining > 0)
             {
-                if (elementByNative.TryGetValue(child, out var oldElement))
-                {
-                    UnmountNative(child, oldElement);
-                }
-
-                panel.Children.RemoveAt(i);
+                needed[child] = remaining - 1;
+                continue;
             }
+
+            UnmountNative(
+                child,
+                elementByNative.TryGetValue(child, out var staleElement)
+                    ? staleElement
+                    : EmptyElement.Instance);
+            panel.Children.RemoveAt(i);
         }
 
-        // 就地重排：复用控件保持原位（不 detach，保留焦点/状态），
-        // 新建控件插入到目标位置，仅在顺序真正变化时才移动复用控件。
-        for (var newIdx = 0; newIdx < newNatives.Length; newIdx++)
+        // 就地重排：处理完位置 i 后 panel.Children[0..i] 恒等于 finalOrder[0..i]，
+        // 后续步骤只在下标 >= i+1 处增删，不会破坏已固定的前缀 → 必然收敛。
+        // 复用控件仅在顺序真的变化时才被 Remove/Insert（否则原地不动，保住焦点）。
+        for (var i = 0; i < finalOrder.Count; i++)
         {
-            var target = newNatives[newIdx];
-            if (target is null)
+            var target = finalOrder[i];
+            var current = IndexOfNative(panel, target);
+            if (current == i)
             {
                 continue;
             }
 
-            if (newIdx < panel.Children.Count && ReferenceEquals(panel.Children[newIdx], target))
+            if (current >= 0)
             {
-                continue; // 目标已在正确位置
+                panel.Children.RemoveAt(current);
             }
 
-            if (panel.Children.Contains(target))
-            {
-                // 复用控件，位置需要移动
-                panel.Children.Remove(target);
-                panel.Children.Insert(newIdx, target);
-            }
-            else
-            {
-                // 新建控件
-                panel.Children.Insert(newIdx, target);
-            }
+            panel.Children.Insert(Math.Min(i, panel.Children.Count), target);
         }
 
-        // 收尾一致性校验：面板最终必须恰好是 newNatives。
+        // 收尾一致性校验：面板最终必须恰好是 finalOrder。
         // 走到这里若数量不符，说明上面哪一步漏了，宁可整体重建也不要带着错位继续。
-        if (panel.Children.Count != newNatives.Length)
+        if (panel.Children.Count != finalOrder.Count)
         {
             Hosting.ReactorApplication.Trace(
                 $"[reactor] 重排后数量不符，重建: natives={panel.Children.Count} " +
-                $"expected={newNatives.Length} panel={panel.GetType().Name}");
+                $"expected={finalOrder.Count} panel={panel.GetType().Name} " +
+                $"old=[{Describe(oldKids)}] new=[{Describe(newKids)}]");
             RebuildChildren(panel, oldKids, newKids);
         }
+    }
+
+    private static int IndexOfNative(Panel panel, UIElement target)
+    {
+        for (var i = 0; i < panel.Children.Count; i++)
+        {
+            if (ReferenceEquals(panel.Children[i], target))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>把 element 序列描述成便于比对的字符串（类型 + Key），仅用于诊断。</summary>
+    private static string Describe(IReadOnlyList<Element> elements)
+    {
+        var parts = new string[elements.Count];
+        for (var i = 0; i < elements.Count; i++)
+        {
+            var element = elements[i];
+            parts[i] = element.Key is { } key
+                ? element.GetType().Name + "#" + key
+                : element.GetType().Name;
+        }
+
+        return string.Join(", ", parts);
     }
 
     /// <summary>
@@ -757,64 +895,62 @@ internal sealed class Reconciler
 
         UnmountNative(native, element ?? EmptyElement.Instance);
 
-        switch (native)
+        if (element is null)
         {
-            case Panel panel when ChildrenOf(element) is { } kids:
-                var list = NonNull(kids);
-                var count = Math.Min(panel.Children.Count, list.Count);
-                for (var i = 0; i < count; i++)
-                {
-                    UnmountTree(panel.Children[i], list[i]);
-                }
+            return;
+        }
 
-                break;
+        var handler = FindHandler(element);
 
-            case ScrollViewer scrollViewer
-                when element is ScrollViewerElement scrollElement &&
-                     scrollViewer.Content is UIElement content:
-                UnmountTree(content, scrollElement.Child);
-                break;
+        if (native is Panel panel && handler?.ChildrenOf(element) is { } kids)
+        {
+            var list = NonNull(kids);
+            var count = Math.Min(panel.Children.Count, list.Count);
+            for (var i = 0; i < count; i++)
+            {
+                UnmountTree(panel.Children[i], list[i]);
+            }
+
+            return;
+        }
+
+        var singleChild = handler?.SingleChildOf(element);
+        if (singleChild is not null)
+        {
+            var content = native switch
+            {
+                ContentControl contentControl => contentControl.Content as UIElement,
+                Border border => border.Child,
+                _ => null,
+            };
+
+            if (content is not null)
+            {
+                UnmountTree(content, singleChild);
+            }
         }
     }
 
-    /// <summary>取容器中子元素描述（Stack / Group 才有）。</summary>
-    private static IReadOnlyList<Element?>? ChildrenOf(Element? element) => element switch
-    {
-        StackElement stack => stack.Children,
-        GroupElement group => group.Children,
-        _ => null,
-    };
+    private static IElementHandler? FindHandler(Element element) =>
+        ElementHandlerRegistry.TryGet(element.GetType(), out var handler) ? handler : null;
 
     /// <summary>卸载原生控件：解绑事件、清理组件节点。</summary>
-    private void UnmountNative(UIElement native, Element element)
+    internal void UnmountNative(UIElement native, Element element)
     {
-        switch (native)
+        if (native is Border wrapper && _componentNodes.TryGetValue(wrapper, out var node))
         {
-            case Button button:
-                RebindButtonClick(button, null);
-                break;
-
-            case Border wrapper when _componentNodes.TryGetValue(wrapper, out var node):
-                node.IsMounted = false;
-                node.Context.RunCleanups();
-                _componentNodes.Remove(wrapper);
-                break;
-
-            case TextBox textBox:
-                RebindTextChanged(textBox, null);
-                break;
-
-            case CheckBox checkBox:
-                RebindCheckBox(checkBox, null);
-                break;
-
-            case Slider slider:
-                RebindSlider(slider, null);
-                break;
+            node.IsMounted = false;
+            node.Context.RunCleanups();
+            _componentNodes.Remove(wrapper);
+            return;
         }
+
+        FindHandler(element)?.Unmount(this, native);
     }
 
-    private void RebindTextChanged(TextBox textBox, Action<string>? onChanged)
+    // ── 事件重绑（由 handler 调用） ──────────────────────────────
+
+    internal void RebindTextChanged(TextBox textBox, Action<string>? onChanged)
     {
         if (_textChanged.TryGetValue(textBox, out var existing))
         {
@@ -832,7 +968,7 @@ internal sealed class Reconciler
         _textChanged[textBox] = handler;
     }
 
-    private void RebindCheckBox(CheckBox checkBox, Action<bool>? onIsCheckedChanged)
+    internal void RebindCheckBox(CheckBox checkBox, Action<bool>? onIsCheckedChanged)
     {
         if (_checkBoxChecked.TryGetValue(checkBox, out var existingChecked))
         {
@@ -859,7 +995,7 @@ internal sealed class Reconciler
         _checkBoxUnchecked[checkBox] = uncheckedHandler;
     }
 
-    private void RebindSlider(Slider slider, Action<double>? onValueChanged)
+    internal void RebindSlider(Slider slider, Action<double>? onValueChanged)
     {
         if (_sliderValueChanged.TryGetValue(slider, out var existing))
         {
@@ -877,7 +1013,7 @@ internal sealed class Reconciler
         _sliderValueChanged[slider] = handler;
     }
 
-    private void RebindButtonClick(Button button, Action? onClick)
+    internal void RebindButtonClick(Button button, Action? onClick)
     {
         if (_buttonClicks.TryGetValue(button, out var existing))
         {
@@ -895,6 +1031,8 @@ internal sealed class Reconciler
         _buttonClicks[button] = handler;
     }
 
+    // ── 修饰符 ──────────────────────────────────────────────────
+
     private static void ApplyModifiers(UIElement native, ElementModifiers? modifiers)
     {
         if (modifiers is null || native is not FrameworkElement framework)
@@ -902,83 +1040,70 @@ internal sealed class Reconciler
             return;
         }
 
-        if (modifiers.Margin is { } margin)
-        {
-            framework.Margin = margin;
-        }
-
-        if (modifiers.Width is { } width)
-        {
-            framework.Width = width;
-        }
-
-        if (modifiers.Height is { } height)
-        {
-            framework.Height = height;
-        }
-
-        if (modifiers.HorizontalAlignment is { } horizontal)
-        {
-            framework.HorizontalAlignment = horizontal;
-        }
-
-        if (modifiers.VerticalAlignment is { } vertical)
-        {
-            framework.VerticalAlignment = vertical;
-        }
-
-        if (modifiers.MinWidth is { } minWidth)
-        {
-            framework.MinWidth = minWidth;
-        }
-
-        if (modifiers.MinHeight is { } minHeight)
-        {
-            framework.MinHeight = minHeight;
-        }
-
-        if (modifiers.MaxWidth is { } maxWidth)
-        {
-            framework.MaxWidth = maxWidth;
-        }
-
-        if (modifiers.MaxHeight is { } maxHeight)
-        {
-            framework.MaxHeight = maxHeight;
-        }
+        // 官方 OneWay 的 diff-and-write。这里没有"上一轮 modifiers"可比对，
+        // 所以走 SetLive 语义（与控件当前值比）——效果与拿旧元素 diff 完全相同：
+        // 写同值不产生任何变化通知，也就不会触发重绘/重排。
+        WriteIfChanged(() => framework.Margin, modifiers.Margin, value => framework.Margin = value);
+        WriteIfChanged(() => framework.Width, modifiers.Width, value => framework.Width = value);
+        WriteIfChanged(() => framework.Height, modifiers.Height, value => framework.Height = value);
+        WriteIfChanged(
+            () => framework.HorizontalAlignment,
+            modifiers.HorizontalAlignment,
+            value => framework.HorizontalAlignment = value);
+        WriteIfChanged(
+            () => framework.VerticalAlignment,
+            modifiers.VerticalAlignment,
+            value => framework.VerticalAlignment = value);
+        WriteIfChanged(() => framework.MinWidth, modifiers.MinWidth, value => framework.MinWidth = value);
+        WriteIfChanged(() => framework.MinHeight, modifiers.MinHeight, value => framework.MinHeight = value);
+        WriteIfChanged(() => framework.MaxWidth, modifiers.MaxWidth, value => framework.MaxWidth = value);
+        WriteIfChanged(() => framework.MaxHeight, modifiers.MaxHeight, value => framework.MaxHeight = value);
+        WriteIfChanged(() => framework.Opacity, modifiers.Opacity, value => framework.Opacity = value);
 
         if (modifiers.IsVisible is { } isVisible)
         {
-            framework.Visibility = isVisible ? Visibility.Visible : Visibility.Collapsed;
+            var visibility = isVisible ? Visibility.Visible : Visibility.Collapsed;
+            WriteIfChanged(() => framework.Visibility, visibility, value => framework.Visibility = value);
         }
 
-        if (modifiers.Opacity is { } opacity)
-        {
-            framework.Opacity = opacity;
-        }
-
-        if (modifiers.ToolTip is { } toolTip)
-        {
-            ToolTipService.SetToolTip(native, toolTip);
-        }
-
-        if (modifiers.AutomationId is { } automationId)
-        {
-            AutomationProperties.SetAutomationId(native, automationId);
-        }
+        WriteRefIfChanged<object>(
+            () => ToolTipService.GetToolTip(native),
+            modifiers.ToolTip,
+            value => ToolTipService.SetToolTip(native, value));
+        WriteRefIfChanged(
+            () => AutomationProperties.GetAutomationId(native),
+            modifiers.AutomationId,
+            value => AutomationProperties.SetAutomationId(native, value));
+        WriteRefIfChanged(
+            () => AutomationProperties.GetName(native),
+            modifiers.AutomationName,
+            value => AutomationProperties.SetName(native, value));
 
         ApplyBackground(native, modifiers);
         ApplyBorder(native, modifiers);
+        ApplyStyle(framework, modifiers);
+        ApplyTextAppearance(native, modifiers);
+        ApplyTitleBar(framework, modifiers);
+
+        if (modifiers.RequestedTheme is { } theme)
+        {
+            WriteIfChanged(() => framework.RequestedTheme, theme, value => framework.RequestedTheme = value);
+        }
 
         if (modifiers.FontSize is { } fontSize)
         {
             switch (native)
             {
                 case Control control:
-                    control.FontSize = fontSize;
+                    WriteIfChanged(() => control.FontSize, fontSize, value => control.FontSize = value);
                     break;
                 case TextBlock text:
-                    text.FontSize = fontSize;
+                    WriteIfChanged(() => text.FontSize, fontSize, value => text.FontSize = value);
+                    break;
+                case FontIcon icon:
+                    // FontIcon 是 IconElement（既不是 Control 也不是 TextBlock），
+                    // 但它有 FontSize：漏掉这一档时 .FontSize() 会被静默丢弃。
+                    WriteIfChanged(() => icon.FontSize, fontSize, value => icon.FontSize = value);
                     break;
             }
         }
@@ -989,34 +1114,211 @@ internal sealed class Reconciler
         }
         else if (modifiers.ForegroundColor is { } foregroundColor)
         {
-            ApplyForeground(native, new SolidColorBrush(foregroundColor));
+            // 颜色 → Brush：颜色不变就复用控件上已有的 Brush，绝不每帧 new。
+            // 新实例赋进依赖属性 = 一次真实变化 = 一次重绘（大面积前景色尤其明显）。
+            switch (native)
+            {
+                case Control control:
+                    PropWriter.SetColorBrush(control, Control.ForegroundProperty, foregroundColor);
+                    break;
+                case TextBlock text:
+                    PropWriter.SetColorBrush(text, TextBlock.ForegroundProperty, foregroundColor);
+                    break;
+            }
         }
 
         if (modifiers.IsEnabled is { } isEnabled && native is Control enabledControl)
         {
-            enabledControl.IsEnabled = isEnabled;
-        }
-
-        if (modifiers.AutomationName is { } automationName)
-        {
-            AutomationProperties.SetName(native, automationName);
+            WriteIfChanged(() => enabledControl.IsEnabled, isEnabled, value => enabledControl.IsEnabled = value);
         }
 
         if (modifiers.Padding is { } padding)
         {
+            ApplyPadding(native, padding);
+        }
+    }
+
+    /// <summary>
+    /// Padding 落在哪些原生类型上：<b>不是所有元素都有这个属性</b>。
+    /// </summary>
+    /// <remarks>
+    /// UWP 里 <c>Padding</c> 不是 <see cref="FrameworkElement"/> 的属性，而是各自声明：
+    /// <see cref="Control"/> / <see cref="TextBlock"/> / <see cref="Border"/> /
+    /// <see cref="ContentPresenter"/> 有，面板里只有 <see cref="Grid"/>、
+    /// <see cref="StackPanel"/>、<see cref="RelativePanel"/> 有（<see cref="Panel"/>
+    /// 基类<b>没有</b>，<c>Canvas</c> / <c>Viewbox</c> 也没有）。
+    /// 之前这里只写了 Control / TextBlock，于是 <c>HStack(...).Padding(20,16,20,0)</c>
+    /// 这类"面板内边距"被静默丢弃——模板里面包屑栏的上/左内边距就是这么没的。
+    /// 剩下的类型（Canvas 等）不是"写错了"而是"根本没有该属性"，按类型只报一次日志，
+    /// 避免每帧刷屏也不至于无声无息。
+    /// </remarks>
+    private static void ApplyPadding(UIElement native, Thickness padding)
+    {
+        switch (native)
+        {
+            case Control control:
+                WriteIfChanged(() => control.Padding, padding, value => control.Padding = value);
+                break;
+            case TextBlock text:
+                WriteIfChanged(() => text.Padding, padding, value => text.Padding = value);
+                break;
+            case Border border:
+                WriteIfChanged(() => border.Padding, padding, value => border.Padding = value);
+                break;
+            case ContentPresenter presenter:
+                WriteIfChanged(() => presenter.Padding, padding, value => presenter.Padding = value);
+                break;
+            case StackPanel stack:
+                WriteIfChanged(() => stack.Padding, padding, value => stack.Padding = value);
+                break;
+            case Grid grid:
+                WriteIfChanged(() => grid.Padding, padding, value => grid.Padding = value);
+                break;
+            case RelativePanel relative:
+                WriteIfChanged(() => relative.Padding, padding, value => relative.Padding = value);
+                break;
+            default:
+                if (UnsupportedPaddingTypes.Add(native.GetType()))
+                {
+                    Hosting.ReactorApplication.Trace(
+                        $"[reactor] 该类型没有 Padding 属性，.Padding() 被忽略: {native.GetType().FullName}");
+                }
+
+                break;
+        }
+    }
+
+    /// <summary>值类型属性的 diff-and-write：与控件当前值相同就不写。</summary>
+    private static void WriteIfChanged<T>(Func<T> read, T? value, Action<T> write)
+        where T : struct
+    {
+        if (value is not { } typed)
+        {
+            return;
+        }
+
+        // 挂载期无条件写：控件刚 new 出来时读到的是依赖属性默认值（默认样式还没
+        // 应用），"声明值 == 默认值"会被 diff 判成没变而跳过，随后样式值接管。
+        if (!PropWriter.IsMounting && Equals(read(), typed))
+        {
+            return;
+        }
+
+        write(typed);
+    }
+
+    /// <summary>引用类型属性的 diff-and-write（按值比较：字符串等内容相等即视为未变）。</summary>
+    private static void WriteRefIfChanged<T>(Func<T?> read, T? value, Action<T> write)
+        where T : class
+    {
+        if (value is not { } typed)
+        {
+            return;
+        }
+
+        if (!PropWriter.IsMounting && Equals(read(), typed))
+        {
+            return;
+        }
+
+        write(typed);
+    }
+
+    // 命名样式：XAML 的 Style="{StaticResource …}" 等价物。
+    // 每次（含 update）都执行，所以条件切换样式在就地更新路径上也生效——
+    // 官方 Reactor 走 OnMount，只在首次挂载时应用。
+    private static void ApplyStyle(FrameworkElement framework, ElementModifiers modifiers)
+    {
+        if (modifiers.StyleKey is not { } key)
+        {
+            return;
+        }
+
+        if (StyleSheet.Resolve(key) is not { } style)
+        {
+            return;
+        }
+
+        // 引用比较即可：同一 Style 实例重复赋值会触发一次多余的样式重应用，
+        // 在列表里表现为滚动时的闪烁。
+        if (!ReferenceEquals(framework.Style, style))
+        {
+            framework.Style = style;
+        }
+    }
+
+    // 自定义标题栏拖拽区：XAML 里由 Window.Current.SetTitleBar(...) 完成。
+    // 重复设置是幂等的，所以不做引用比较。
+    private static void ApplyTitleBar(FrameworkElement framework, ElementModifiers modifiers)
+    {
+        if (modifiers.IsTitleBar == true)
+        {
+            Window.Current?.SetTitleBar(framework);
+        }
+    }
+
+    private static void ApplyTextAppearance(UIElement native, ElementModifiers modifiers)
+    {
+        if (modifiers.TextWrapping is { } wrapping)
+        {
             switch (native)
             {
-                case Control control:
-                    control.Padding = padding;
+                case TextBlock textBlock:
+                    WriteIfChanged(
+                        () => textBlock.TextWrapping, wrapping, value => textBlock.TextWrapping = value);
                     break;
-                case TextBlock text:
-                    text.Padding = padding;
+                case TextBox textBox:
+                    WriteIfChanged(
+                        () => textBox.TextWrapping, wrapping, value => textBox.TextWrapping = value);
+                    break;
+                case RichTextBlock richText:
+                    WriteIfChanged(
+                        () => richText.TextWrapping, wrapping, value => richText.TextWrapping = value);
                     break;
             }
+        }
+
+        if (modifiers.FontWeight is { } weight)
+        {
+            switch (native)
+            {
+                case TextBlock textBlock:
+                    WriteIfChanged(
+                        () => textBlock.FontWeight, weight, value => textBlock.FontWeight = value);
+                    break;
+                case Control control:
+                    WriteIfChanged(
+                        () => control.FontWeight, weight, value => control.FontWeight = value);
+                    break;
+            }
+        }
+
+        if (modifiers.TextAlignment is { } alignment)
+        {
+            switch (native)
+            {
+                case TextBlock textBlock:
+                    WriteIfChanged(
+                        () => textBlock.TextAlignment, alignment, value => textBlock.TextAlignment = value);
+                    break;
+                case TextBox textBox:
+                    WriteIfChanged(
+                        () => textBox.TextAlignment, alignment, value => textBox.TextAlignment = value);
+                    break;
+            }
+        }
+
+        if (modifiers.MaxLines is { } maxLines && native is TextBlock limited)
+        {
+            WriteIfChanged(() => limited.MaxLines, maxLines, value => limited.MaxLines = value);
         }
     }
 
     /// <summary>Background 只有部分控件类型有该属性（Control / Panel / Border）。</summary>
+    /// <remarks>
+    /// Brush 是引用类型：内容一样但每次 <c>new</c> 都是新实例，无条件赋值 = 一次真实的
+    /// 依赖属性变化 = 一次重绘。所以这里一律"内容不同才写"。
+    /// </remarks>
     private static void ApplyBackground(UIElement native, ElementModifiers modifiers)
     {
         Brush? brush = modifiers.Background;
@@ -1033,13 +1335,13 @@ internal sealed class Reconciler
         switch (native)
         {
             case Control control:
-                control.Background = brush;
+                PropWriter.SetBrush(control, Control.BackgroundProperty, brush);
                 break;
             case Panel panel:
-                panel.Background = brush;
+                PropWriter.SetBrush(panel, Panel.BackgroundProperty, brush);
                 break;
             case Border border:
-                border.Background = brush;
+                PropWriter.SetBrush(border, Border.BackgroundProperty, brush);
                 break;
         }
     }
@@ -1051,10 +1353,10 @@ internal sealed class Reconciler
             switch (native)
             {
                 case Control control:
-                    control.BorderBrush = borderBrush;
+                    PropWriter.SetBrush(control, Control.BorderBrushProperty, borderBrush);
                     break;
                 case Border border:
-                    border.BorderBrush = borderBrush;
+                    PropWriter.SetBrush(border, Border.BorderBrushProperty, borderBrush);
                     break;
             }
         }
@@ -1064,10 +1366,16 @@ internal sealed class Reconciler
             switch (native)
             {
                 case Control control:
-                    control.BorderThickness = borderThickness;
+                    WriteIfChanged(
+                        () => control.BorderThickness,
+                        borderThickness,
+                        value => control.BorderThickness = value);
                     break;
                 case Border border:
-                    border.BorderThickness = borderThickness;
+                    WriteIfChanged(
+                        () => border.BorderThickness,
+                        borderThickness,
+                        value => border.BorderThickness = value);
                     break;
             }
         }
@@ -1078,10 +1386,10 @@ internal sealed class Reconciler
         switch (native)
         {
             case Control control:
-                control.Foreground = brush;
+                PropWriter.SetBrush(control, Control.ForegroundProperty, brush);
                 break;
             case TextBlock text:
-                text.Foreground = brush;
+                PropWriter.SetBrush(text, TextBlock.ForegroundProperty, brush);
                 break;
         }
     }

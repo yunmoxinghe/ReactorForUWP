@@ -66,8 +66,17 @@ public static partial class Factories
         Action<double>? onValueChanged = null) =>
         new(value, min, max, onValueChanged);
 
-    public static ScrollViewerElement ScrollViewer(Element? child = null) =>
-        new(child);
+    // 默认值必须与 ScrollViewerElement 一致（横向 Disabled）：工厂与元素两处
+    // 默认值不一致会让"默认构造"的行为随调用点漂移——曾经这里默认 Auto，
+    // 于是页面型滚动容器又退化成用无限宽测量内容，卡片宽度随最宽子项漂移。
+    public static ScrollViewerElement ScrollViewer(
+        Element? child = null,
+        ScrollBarVisibility horizontalScrollBar = ScrollBarVisibility.Disabled,
+        ScrollBarVisibility verticalScrollBar = ScrollBarVisibility.Auto,
+        ScrollMode horizontalScroll = ScrollMode.Enabled,
+        ScrollMode verticalScroll = ScrollMode.Enabled,
+        HorizontalAlignment horizontalContent = HorizontalAlignment.Left) =>
+        new(child, horizontalScrollBar, verticalScrollBar, horizontalScroll, verticalScroll, horizontalContent);
 
     // ── 组合子（对齐官方 Dsl） ─────────────────────────────────
 

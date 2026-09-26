@@ -23,6 +23,12 @@ internal sealed class ComponentNode
     /// <summary>当前渲染产出的 Element 树（用于 diff）。</summary>
     public Element? CurrentElement { get; set; }
 
+    /// <summary>
+    /// 本组件渲染时生效的 Context 作用域（祖先 Provide 的固化快照）。
+    /// 遍历期与协调器的作用域同步一次，之后即使异步重渲染也能读到祖先提供的值。
+    /// </summary>
+    public ContextScope ContextScope { get; } = new();
+
     /// <summary>原生控件根（Border 锚点）。类型为 object 以保持 Core 层平台无关。</summary>
     public object? NativeRoot { get; set; }
 

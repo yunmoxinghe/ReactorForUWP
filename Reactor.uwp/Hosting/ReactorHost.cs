@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using Microsoft.UI.Reactor.Core;
 using Reactor.Uwp.Internal;
 using Windows.UI;
@@ -42,7 +44,6 @@ public sealed class ReactorHost
     private readonly Reconciler _reconciler = new();
     private Element? _tree;
     private bool _renderQueued;
-    private bool _inRenderPass;
     private BackdropKind? _lastBackdrop;
 
     public ReactorHost(Component root)
@@ -73,7 +74,9 @@ public sealed class ReactorHost
         {
             // patch 途中被控件事件同步触发：推迟到本轮结束后再跑，
             // 否则内外两层 patch 会交错改同一棵原生树（同类崩溃的根因）。
-            if (_inRenderPass)
+            // 注意必须用协调器的标志位：宿主渲染与子组件重渲染共用同一把锁，
+            // 否则宿主驱动的一轮渲染不会被识别为"渲染中"。
+            if (_reconciler.InRenderPass)
             {
                 _ = Root.Dispatcher.RunAsync(CoreDispatcherPriority.Normal, Rerender);
                 return;
@@ -99,14 +102,16 @@ public sealed class ReactorHost
 
     private void Rerender()
     {
-        _inRenderPass = true;
-        try
+        _reconciler.RunPass(() =>
         {
             _root.BeginRender();
             var next = _root.Render();
             _root.EndRender();
 
             ApplyBackdrop(next);
+
+            // 根元素声明 OwnsTitleBar 时，宿主让出标题栏区域的布局权（见该修饰符的注释）。
+            ReactorApplication.SetOwnsTitleBar(next.Modifiers?.OwnsTitleBar == true);
 
             if (_tree is null || Root.Content is not UIElement native ||
                 !Reconciler.CanPatch(_tree, next))
@@ -119,11 +124,150 @@ public sealed class ReactorHost
             }
 
             _tree = next;
-        }
-        finally
+
+            // 诊断：XAML 原生侧的异常（布局 / 渲染 / SetTitleBar）通常不带托管堆栈，
+            // 日志里只剩一句“未指定的错误”。这里主动同步触发一次布局，
+            // 让异常在托管帧里抛出，堆栈里至少能看出是布局阶段、由哪次重渲染引起。
+            // 定位完成后应删掉这段（每次渲染强制布局有性能代价）。
+            try
+            {
+                Root.UpdateLayout();
+            }
+            catch (Exception ex)
+            {
+                ReactorApplication.Trace(
+                    $"[reactor] 布局阶段异常: [{ex.GetType().Name}] 0x{ex.HResult:X8} {ex.Message}\n{ex.StackTrace}");
+
+                // 只知道"布局阶段炸了"没用，必须知道是<b>哪个</b>元素炸的。
+                ReactorApplication.Trace(LocateLayoutFailure(Root));
+            }
+        });
+    }
+
+    /// <summary>
+    /// 定位导致布局失败的最小子树：<b>逐层二分</b>。
+    /// 做法是把某个子树的 <c>Visibility</c> 临时置成 <c>Collapsed</c>，
+    /// 再跑一次根布局——不抛了就说明元凶在这棵子树里，然后继续往下钻。
+    /// </summary>
+    /// <remarks>
+    /// 只在根布局已抛异常时才跑，正常渲染路径零开销。
+    /// 二分会临时改动可见性并强制布局，属于"反正要崩"的兜底诊断，定位完应删掉。
+    /// </remarks>
+    private static string LocateLayoutFailure(UIElement root)
+    {
+        var report = new System.Text.StringBuilder("[reactor] 最小失败子树定位:\n");
+
+        // 先确认异常可复现：不可复现的话二分没有意义。
+        var repeat = new System.Text.StringBuilder("  可复现性: ");
+        for (var i = 0; i < 3; i++)
         {
-            _inRenderPass = false;
+            repeat.Append(TryUpdateLayout(root) ? "ok " : "FAIL ");
         }
+
+        report.AppendLine(repeat.ToString());
+
+        var node = (DependencyObject)root;
+        var path = new List<string>();
+
+        for (var depth = 0; depth < 40; depth++)
+        {
+            var culprit = FindCulpritChild(root, node, report);
+            if (culprit is null)
+            {
+                report.AppendLine($"  → 失败源就在本节点: {Describe(node)}  路径 {string.Join("/", path)}");
+                break;
+            }
+
+            path.Add(Describe(culprit));
+
+            int children;
+            try
+            {
+                children = VisualTreeHelper.GetChildrenCount(culprit);
+            }
+            catch
+            {
+                children = 0;
+            }
+
+            if (children == 0)
+            {
+                report.AppendLine($"  → 叶子元凶: {string.Join("/", path)}");
+                break;
+            }
+
+            node = culprit;
+        }
+
+        return report.ToString();
+    }
+
+    /// <summary>逐个隐藏子节点并重试根布局，返回"隐藏它就不抛"的那个子节点。</summary>
+    private static DependencyObject? FindCulpritChild(
+        UIElement root,
+        DependencyObject node,
+        System.Text.StringBuilder report)
+    {
+        int count;
+        try
+        {
+            count = VisualTreeHelper.GetChildrenCount(node);
+        }
+        catch (Exception ex)
+        {
+            report.AppendLine($"  <遍历中断 {Describe(node)}: {ex.Message}>");
+            return null;
+        }
+
+        for (var i = 0; i < count; i++)
+        {
+            DependencyObject child;
+            try
+            {
+                child = VisualTreeHelper.GetChild(node, i);
+            }
+            catch
+            {
+                continue;
+            }
+
+            if (child is not UIElement ui || ui.Visibility == Visibility.Collapsed)
+            {
+                continue;
+            }
+
+            var original = ui.Visibility;
+            ui.Visibility = Visibility.Collapsed;
+            var ok = TryUpdateLayout(root);
+            ui.Visibility = original;
+
+            if (ok)
+            {
+                report.AppendLine($"  隐藏 #{i} {Describe(child)} 后不再抛 → 元凶在这棵子树里");
+                return child;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryUpdateLayout(UIElement root)
+    {
+        try
+        {
+            root.UpdateLayout();
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    private static string Describe(DependencyObject node)
+    {
+        var name = node.GetType().Name;
+        return node is FrameworkElement { Name.Length: > 0 } fe ? $"{fe.Name}:{name}" : name;
     }
 
     /// <summary>

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using Windows.UI;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Media;
@@ -42,6 +43,7 @@ public record ElementModifiers
     public double? MinHeight { get; init; }
     public double? MaxWidth { get; init; }
     public double? MaxHeight { get; init; }
+
     public HorizontalAlignment? HorizontalAlignment { get; init; }
     public VerticalAlignment? VerticalAlignment { get; init; }
     public double? FontSize { get; init; }
@@ -58,6 +60,52 @@ public record ElementModifiers
     public string? AutomationId { get; init; }
     public string? ToolTip { get; init; }
     public BackdropKind? Backdrop { get; init; }
+
+    /// <summary>
+    /// 命名样式键。解析顺序：自定义样式表（<see cref="Microsoft.UI.Reactor.StyleSheet"/>）
+    /// → 应用资源字典（<c>Application.Current.Resources</c>，含 WinUI 内置样式）。
+    /// 由 <c>.ApplyStyle("CaptionTextBlockStyle")</c> 写入。
+    /// </summary>
+    public string? StyleKey { get; init; }
+
+    /// <summary>文本换行（作用于 TextBlock / TextBox 等）。</summary>
+    public TextWrapping? TextWrapping { get; init; }
+
+    /// <summary>字重（作用于 TextBlock / Control）。</summary>
+    public Windows.UI.Text.FontWeight? FontWeight { get; init; }
+
+    /// <summary>文本对齐（作用于 TextBlock / TextBox）。</summary>
+    public TextAlignment? TextAlignment { get; init; }
+
+    /// <summary>
+    /// 把该元素注册为窗口的自定义标题栏拖拽区（等价 XAML 里的
+    /// <c>Window.Current.SetTitleBar(element)</c>）。
+    /// 需要宿主事先调用 <c>ApplicationView.TitleBar.ExtendViewIntoTitleBar = true</c>。
+    /// </summary>
+    public bool? IsTitleBar { get; init; }
+
+    /// <summary>该元素（及其子树）的请求主题。对应 XAML 的 <c>RequestedTheme</c>。</summary>
+    public ElementTheme? RequestedTheme { get; init; }
+
+    /// <summary>
+    /// 根元素声明"我自己管理标题栏区域布局"：宿主不再自动加顶部 Padding。
+    /// </summary>
+    /// <remarks>
+    /// 宿主默认把根容器下压一个标题栏高度（让背景材质铺满整窗）。
+    /// 但像 WinUI 设置类模板那样的页面，标题栏区是页面自己的第一行
+    /// （<c>Grid Height=32</c> + <c>SetTitleBar</c>），再叠加宿主的下压就变成 64px。
+    /// 声明这个标记即可完全接管。
+    /// </remarks>
+    public bool? OwnsTitleBar { get; init; }
+
+    /// <summary>最大行数（作用于 TextBlock）。</summary>
+    public int? MaxLines { get; init; }
+
+    /// <summary>
+    /// Grid 附加位置（行/列/跨行/跨列），由 <c>.Grid(row: …)</c> 写入，
+    /// 只有直接挂在 <c>Grid</c> 下的子元素会被应用。
+    /// </summary>
+    public Microsoft.UI.Reactor.GridAttached? Grid { get; init; }
 
     /// <summary>本元素向其子树提供的 Context 值（见 <see cref="Context{T}"/>）。</summary>
     public IReadOnlyDictionary<ContextBase, object?>? ContextValues { get; init; }
@@ -89,12 +137,22 @@ public record ElementModifiers
         AutomationId = other.AutomationId ?? AutomationId,
         ToolTip = other.ToolTip ?? ToolTip,
         Backdrop = other.Backdrop ?? Backdrop,
+        StyleKey = other.StyleKey ?? StyleKey,
+        TextWrapping = other.TextWrapping ?? TextWrapping,
+        FontWeight = other.FontWeight ?? FontWeight,
+        TextAlignment = other.TextAlignment ?? TextAlignment,
+        MaxLines = other.MaxLines ?? MaxLines,
+        IsTitleBar = other.IsTitleBar ?? IsTitleBar,
+        RequestedTheme = other.RequestedTheme ?? RequestedTheme,
+        OwnsTitleBar = other.OwnsTitleBar ?? OwnsTitleBar,
+        Grid = other.Grid ?? Grid,
         ContextValues = other.ContextValues ?? ContextValues,
     };
 }
 
 /// <summary>组件元素：描述一个子组件的类型与 props，实例由 Reconciler 创建并维护。</summary>
 public record ComponentElement(
+    [property: DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
     Type ComponentType,
     object? Props = null) : Element;
 

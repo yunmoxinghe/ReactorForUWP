@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    无 NuGet 依赖的自带测试运行器（`dotnet run` 即可跑，退出码非 0 表示失败）。
+    做法：把 Reactor.uwp 里**纯逻辑**的几个文件以 Link 方式编进来，
+    这样 hook / context 层可以在没有 UWP 运行时、没有 UI 线程的环境下被断言。
+    依赖 Windows.UI.Xaml 的部分（元素记录、协调器）不适合这里，
+    它们的回归由 UwpApp 内的自检页 + 手工回归页覆盖。
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>Reactor.Core.Tests</RootNamespace>
+    <AssemblyName>Reactor.Core.Tests</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="HookTests.cs" />
+    <Compile Include="ContextTests.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\Reactor.uwp\Core\RenderContext.cs" Link="Reactor\RenderContext.cs" />
+    <Compile Include="..\..\Reactor.uwp\Core\HookStates.cs" Link="Reactor\HookStates.cs" />
+    <Compile Include="..\..\Reactor.uwp\Core\Context.cs" Link="Reactor\Context.cs" />
+    <Compile Include="..\..\Reactor.uwp\Core\ContextScope.cs" Link="Reactor\ContextScope.cs" />
+    <Compile Include="..\..\Reactor.uwp\Elements\Optional.cs" Link="Reactor\Optional.cs" />
+  </ItemGroup>
+
+</Project>

@@ -58,7 +58,11 @@ public static class ReactorApp
 }
 
 /// <summary>ReactorApp.Run 用的具体 Application（UWP 需要实体类型才能激活）。</summary>
-internal sealed class ReactorAppApplication<TRoot> : global::Reactor.Uwp.Hosting.ReactorApplication<TRoot>
+/// <remarks>
+/// CsWinRT1028：实现 WinRT 接口的类型（含父类型）必须声明为 partial，
+/// 否则 trimming / AOT 下跨 ABI 传递会出问题。
+/// </remarks>
+internal sealed partial class ReactorAppApplication<TRoot> : global::Reactor.Uwp.Hosting.ReactorApplication<TRoot>
     where TRoot : Microsoft.UI.Reactor.Core.Component, new()
 {
 }

@@ -73,8 +73,8 @@ public abstract class Component
         Context.UseEffect(effectWithCleanup, dependencies);
     }
 
-    /// <summary>渲染前由宿主调用：重置 hook 读取游标。</summary>
-    internal void BeginRender() => Context.BeginRender();
+    /// <summary>渲染前由宿主调用：重置 hook 读取游标，并绑定当前 Context 作用域。</summary>
+    internal void BeginRender(ContextScope? contextScope = null) => Context.BeginRender(contextScope);
 
     /// <summary>渲染后由宿主调用：校验 hook 数量、执行 effect。</summary>
     internal void EndRender() => Context.EndRender();
