@@ -14,6 +14,7 @@ public sealed class RenderContext
     private bool _isRendering;
     private Action? _requestRerender;
     private Func<bool>? _isMountedCheck;
+    private Func<ContextBase, object?>? _contextLookup;
 
     /// <summary>由宿主在首次渲染前注入：状态变化时请求重渲染。</summary>
     internal Action? RequestRerender
@@ -307,6 +308,131 @@ public sealed class RenderContext
         hook.Dependencies = dependencies;
     }
 
+    /// <summary>缓存一次计算结果，依赖不变则直接返回上次的值。</summary>
+    public T UseMemo<T>(Func<T> factory, params object[] dependencies)
+    {
+        if (!_isRendering)
+        {
+            throw new InvalidOperationException("UseMemo 只能在 Render() 中调用。");
+        }
+
+        MemoHookState<T> hook;
+        if (_hookIndex >= _hooks.Count)
+        {
+            hook = new MemoHookState<T>();
+            _hooks.Add(hook);
+        }
+        else
+        {
+            if (_hooks[_hookIndex] is not MemoHookState<T> existing)
+            {
+                throw new HookOrderException(
+                    $"Hook 类型不匹配：第 {_hookIndex} 个 hook 期望 MemoHookState<{typeof(T).Name}>，" +
+                    $"但实际是 {_hooks[_hookIndex].GetType().Name}。");
+            }
+            hook = existing;
+        }
+
+        _hookIndex++;
+
+        if (!hook.HasValue || hook.Dependencies is null ||
+            !SameDependencies(hook.Dependencies, dependencies))
+        {
+            hook.Value = factory();
+            hook.Dependencies = Snapshot(dependencies);
+            hook.HasValue = true;
+        }
+
+        return hook.Value;
+    }
+
+    /// <summary>缓存一个回调委托，依赖不变则保持引用稳定（便于事件订阅对比）。</summary>
+    public Action UseCallback(Action callback, params object[] dependencies)
+    {
+        if (!_isRendering)
+        {
+            throw new InvalidOperationException("UseCallback 只能在 Render() 中调用。");
+        }
+
+        CallbackHookState hook;
+        if (_hookIndex >= _hooks.Count)
+        {
+            hook = new CallbackHookState();
+            _hooks.Add(hook);
+        }
+        else
+        {
+            if (_hooks[_hookIndex] is not CallbackHookState existing)
+            {
+                throw new HookOrderException(
+                    $"Hook 类型不匹配：第 {_hookIndex} 个 hook 期望 CallbackHookState，" +
+                    $"但实际是 {_hooks[_hookIndex].GetType().Name}。");
+            }
+            hook = existing;
+        }
+
+        _hookIndex++;
+
+        if (hook.Callback is null || hook.Dependencies is null ||
+            !SameDependencies(hook.Dependencies, dependencies))
+        {
+            hook.Callback = callback;
+            hook.Dependencies = Snapshot(dependencies);
+        }
+
+        return hook.Callback;
+    }
+
+    /// <summary>声明一个跨渲染保持的可变引用；改 Current 不触发重渲染。</summary>
+    public Ref<T> UseRef<T>(T initialValue = default!)
+    {
+        if (!_isRendering)
+        {
+            throw new InvalidOperationException("UseRef 只能在 Render() 中调用。");
+        }
+
+        RefHookState<T> hook;
+        if (_hookIndex >= _hooks.Count)
+        {
+            hook = new RefHookState<T>(initialValue);
+            _hooks.Add(hook);
+        }
+        else
+        {
+            if (_hooks[_hookIndex] is not RefHookState<T> existing)
+            {
+                throw new HookOrderException(
+                    $"Hook 类型不匹配：第 {_hookIndex} 个 hook 期望 RefHookState<{typeof(T).Name}>，" +
+                    $"但实际是 {_hooks[_hookIndex].GetType().Name}。");
+            }
+            hook = existing;
+        }
+
+        _hookIndex++;
+        return hook.Ref;
+    }
+
+    /// <summary>读取最近的祖先元素提供（<c>Provide</c>）的 Context 值，没有则返回默认值。</summary>
+    public T UseContext<T>(Context<T> context)
+    {
+        if (!_isRendering)
+        {
+            throw new InvalidOperationException("UseContext 只能在 Render() 中调用。");
+        }
+
+        if (context is null) throw new ArgumentNullException(nameof(context));
+
+        var boxed = _contextLookup?.Invoke(context);
+        return boxed is T typed ? typed : context.DefaultValue;
+    }
+
+    /// <summary>由宿主注入：沿组件链向上查找 Context 值。</summary>
+    internal Func<ContextBase, object?>? ContextLookup
+    {
+        get => _contextLookup;
+        set => _contextLookup = value;
+    }
+
     /// <summary>执行所有待处理的 effect（在渲染完成后调用）。</summary>
     internal void FlushEffects()
     {
@@ -364,6 +490,8 @@ public sealed class RenderContext
     {
         return _isMountedCheck?.Invoke() ?? true;
     }
+
+    private static object?[] Snapshot(object?[]? deps) => deps is null ? Array.Empty<object?>() : (object?[])deps.Clone();
 
     private static bool SameDependencies(object?[]? a, object?[]? b)
     {

@@ -19,6 +19,21 @@ namespace Reactor.Uwp.Internal;
 /// </summary>
 internal sealed class Reconciler
 {
+    /// <summary>
+    /// 是否正处于一轮渲染 / patch 中。
+    /// </summary>
+    /// <remarks>
+    /// <b>为什么需要它</b>：patch 过程中会给真实控件赋值（<c>TextBox.Text</c>、
+    /// <c>Button.Content</c>、移除子控件…），XAML 可能同步回调控件事件
+    /// （典型是 TextChanged）。如果回调里调用 setState 立刻重渲染，
+    /// 内外两层 patch 会交错执行：内层基于"外层还没改完"的原生树做增删，
+    /// 外层收尾时再插一次，同一个 Panel 就会多出一个原生子控件，
+    /// 之后下一次 patch 按 element 数量索引就会
+    /// <c>ArgumentOutOfRangeException</c>。
+    /// 因此渲染过程中到来的重渲染请求一律推迟到本轮结束之后。
+    /// </remarks>
+    private bool _inRenderPass;
+
     private readonly Dictionary<Button, RoutedEventHandler> _buttonClicks = new();
     private readonly Dictionary<Border, ComponentNode> _componentNodes = new();
     private readonly Dictionary<TextBox, TextChangedEventHandler> _textChanged = new();
@@ -30,9 +45,13 @@ internal sealed class Reconciler
     {
         UIElement native = element switch
         {
-            TextBlockElement text => new TextBlock { Text = text.Text },
+            TextBlockElement text => new TextBlock { Text = text.Content },
             ButtonElement button => BuildButton(button),
-            StackPanelElement stack => BuildStack(stack),
+            StackElement stack => BuildStack(stack),
+            // EmptyElement 在官方实现里对应 null（不产生控件）；UWP 侧 Build 必须返回
+            // UIElement，因此退化为一个零尺寸的 Grid 占位。
+            EmptyElement => new Grid(),
+            GroupElement group => BuildGroup(group),
             InfoBarElement infoBar => new MuxControls.InfoBar
             {
                 Message = infoBar.Message,
@@ -82,28 +101,14 @@ internal sealed class Reconciler
                 return;
             }
 
-            void DoRerender()
+            // 一轮 patch 还没跑完时又来了状态更新：必须推迟。
+            // 若在此处同步重渲染，内外两层 patch 会交错修改同一棵原生树，
+            // 导致原生子控件数量与 element 子节点数量错位（随后索引越界崩溃）。
+            if (_inRenderPass)
             {
-                if (!node.IsMounted)
-                {
-                    return;
-                }
-
-                node.Instance.BeginRender();
-                var nextElement = node.Instance.Render();
-                node.Instance.EndRender();
-
-                if (node.CurrentElement is null || wrapper.Child is not UIElement childNative ||
-                    !CanPatch(node.CurrentElement, nextElement))
-                {
-                    wrapper.Child = Build(nextElement);
-                }
-                else
-                {
-                    Patch(childNative, node.CurrentElement, nextElement);
-                }
-
-                node.CurrentElement = nextElement;
+                _ = wrapper.Dispatcher.RunAsync(
+                    Windows.UI.Core.CoreDispatcherPriority.Normal, DoRerender);
+                return;
             }
 
             if (wrapper.Dispatcher.HasThreadAccess)
@@ -114,6 +119,41 @@ internal sealed class Reconciler
             {
                 _ = wrapper.Dispatcher.RunAsync(
                     Windows.UI.Core.CoreDispatcherPriority.Normal, DoRerender);
+            }
+
+            // 子组件自己的一轮重渲染。整段包在 RunPass 里，
+            // 这样 patch 途中由控件事件同步触发的状态更新会被识别为"重入"并推迟。
+            void DoRerender()
+            {
+                if (!node.IsMounted)
+                {
+                    return;
+                }
+
+                RunPass(() =>
+                {
+                    if (!node.IsMounted)
+                    {
+                        return;
+                    }
+
+                    node.Instance.BeginRender();
+                    var nextElement = node.Instance.Render();
+                    node.Instance.EndRender();
+
+                    if (node.CurrentElement is null ||
+                        wrapper.Child is not UIElement childNative ||
+                        !CanPatch(node.CurrentElement, nextElement))
+                    {
+                        wrapper.Child = Build(nextElement);
+                    }
+                    else
+                    {
+                        Patch(childNative, node.CurrentElement, nextElement);
+                    }
+
+                    node.CurrentElement = nextElement;
+                });
             }
         }
 
@@ -193,6 +233,24 @@ internal sealed class Reconciler
         // props 相等：跳过重渲染（子组件只响应自己的 state）
     }
 
+    /// <summary>
+    /// 执行一轮渲染 / patch，并把 <see cref="_inRenderPass"/> 置位，
+    /// 使过程中同步触发的状态更新被推迟而不是重入。
+    /// </summary>
+    private void RunPass(Action pass)
+    {
+        var wasInPass = _inRenderPass;
+        _inRenderPass = true;
+        try
+        {
+            pass();
+        }
+        finally
+        {
+            _inRenderPass = wasInPass;
+        }
+    }
+
     /// <summary>重渲染组件子树（在 UI 线程上调用）。</summary>
     private void RerenderComponent(ComponentNode node, Border wrapper)
     {
@@ -201,6 +259,11 @@ internal sealed class Reconciler
             return;
         }
 
+        RunPass(() => RerenderComponentCore(node, wrapper));
+    }
+
+    private void RerenderComponentCore(ComponentNode node, Border wrapper)
+    {
         node.Instance.BeginRender();
         var nextElement = node.Instance.Render();
         node.Instance.EndRender();
@@ -232,7 +295,7 @@ internal sealed class Reconciler
         switch (native)
         {
             case TextBlock text when next is TextBlockElement nextText:
-                text.Text = nextText.Text;
+                text.Text = nextText.Content;
                 break;
 
             case Button button when next is ButtonElement nextButton:
@@ -240,10 +303,22 @@ internal sealed class Reconciler
                 RebindButtonClick(button, nextButton.OnClick);
                 break;
 
-            case StackPanel panel when next is StackPanelElement nextStack:
+            case StackPanel panel when next is StackElement nextStack:
                 panel.Orientation = nextStack.Orientation;
-                PatchChildren(panel,
-                    ((StackPanelElement)old).Children, nextStack.Children);
+                if (nextStack.Spacing is { } spacing)
+                {
+                    panel.Spacing = spacing;
+                }
+
+                PatchChildren(panel, ((StackElement)old).Children, nextStack.Children);
+                break;
+
+            case Grid grid when next is GroupElement nextGroup:
+                PatchChildren(grid, ((GroupElement)old).Children, nextGroup.Children);
+                break;
+
+            case Grid when next is EmptyElement:
+                // 占位元素，无需更新。
                 break;
 
             case MuxControls.InfoBar infoBar when next is InfoBarElement nextInfo:
@@ -284,8 +359,8 @@ internal sealed class Reconciler
             case ScrollViewer scrollViewer when next is ScrollViewerElement nextScroll:
                 PatchScrollContent(
                     scrollViewer,
-                    ((ScrollViewerElement)old).Content,
-                    nextScroll.Content);
+                    ((ScrollViewerElement)old).Child,
+                    nextScroll.Child);
                 break;
 
             case Border wrapper when next is ComponentElement nextComp:
@@ -311,15 +386,32 @@ internal sealed class Reconciler
         return native;
     }
 
-    private StackPanel BuildStack(StackPanelElement stack)
+    private StackPanel BuildStack(StackElement stack)
     {
         var panel = new StackPanel { Orientation = stack.Orientation };
+        if (stack.Spacing is { } spacing)
+        {
+            panel.Spacing = spacing;
+        }
+
         foreach (var child in NonNull(stack.Children))
         {
             panel.Children.Add(Build(child));
         }
 
         return panel;
+    }
+
+    /// <summary>GroupElement 渲染为裸 Grid：不引入额外布局策略。</summary>
+    private Grid BuildGroup(GroupElement group)
+    {
+        var grid = new Grid();
+        foreach (var child in NonNull(group.Children))
+        {
+            grid.Children.Add(Build(child));
+        }
+
+        return grid;
     }
 
     private TextBox BuildTextBox(TextBoxElement textBox)
@@ -377,9 +469,9 @@ internal sealed class Reconciler
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
         };
 
-        if (scroll.Content is not null)
+        if (scroll.Child is not null)
         {
-            native.Content = Build(scroll.Content);
+            native.Content = Build(scroll.Child);
         }
 
         return native;
@@ -419,12 +511,24 @@ internal sealed class Reconciler
     }
 
     private void PatchChildren(
-        StackPanel panel,
+        Panel panel,
         IReadOnlyList<Element?> oldChildren,
         IReadOnlyList<Element?> nextChildren)
     {
         var oldKids = NonNull(oldChildren);
         var newKids = NonNull(nextChildren);
+
+        // 前置一致性检查：原生子控件必须与上一次渲染的 element 子节点一一对应。
+        // 一旦数量对不上说明原生树已经和 element 树错位，继续按位置索引必然越界，
+        // 这里直接退化为整段重建（宁可丢焦点，也不能崩）。
+        if (panel.Children.Count != oldKids.Count)
+        {
+            Hosting.ReactorApplication.Trace(
+                $"[reactor] 子节点错位，重建: natives={panel.Children.Count} " +
+                $"old={oldKids.Count} new={newKids.Count} panel={panel.GetType().Name}");
+            RebuildChildren(panel, oldKids, newKids);
+            return;
+        }
 
         // 快速路径：子节点序列结构完全一致（数量、每位置类型、每位置 Key）。
         // 此时仅就地 Patch，绝不动 Children 集合 —— 否则 Clear/Re-Add 会把
@@ -459,10 +563,15 @@ internal sealed class Reconciler
         var oldKeyed = new Dictionary<string, (Element Element, UIElement Native)>();
         var oldUnkeyed = new List<(Element Element, UIElement Native)>();
 
+        // 原生控件 → 它对应的 element：卸载时用，避免用"面板下标"去索引
+        // element 列表（两者数量一旦对不上就是越界崩溃）。
+        var elementByNative = new Dictionary<UIElement, Element>();
+
         for (var i = 0; i < oldKids.Count; i++)
         {
             var el = oldKids[i];
             var native = panel.Children[i];
+            elementByNative[native] = el;
 
             if (el.Key is { } key)
             {
@@ -554,7 +663,11 @@ internal sealed class Reconciler
             var child = panel.Children[i];
             if (toRemove.Contains(child))
             {
-                UnmountNative(child, oldKids[i]);
+                if (elementByNative.TryGetValue(child, out var oldElement))
+                {
+                    UnmountNative(child, oldElement);
+                }
+
                 panel.Children.RemoveAt(i);
             }
         }
@@ -586,7 +699,91 @@ internal sealed class Reconciler
                 panel.Children.Insert(newIdx, target);
             }
         }
+
+        // 收尾一致性校验：面板最终必须恰好是 newNatives。
+        // 走到这里若数量不符，说明上面哪一步漏了，宁可整体重建也不要带着错位继续。
+        if (panel.Children.Count != newNatives.Length)
+        {
+            Hosting.ReactorApplication.Trace(
+                $"[reactor] 重排后数量不符，重建: natives={panel.Children.Count} " +
+                $"expected={newNatives.Length} panel={panel.GetType().Name}");
+            RebuildChildren(panel, oldKids, newKids);
+        }
     }
+
+    /// <summary>
+    /// 兜底路径：整段卸载 + 重建子节点。仅在原生树与 element 树已错位时调用。
+    /// </summary>
+    private void RebuildChildren(
+        Panel panel,
+        IReadOnlyList<Element> oldKids,
+        IReadOnlyList<Element> newKids)
+    {
+        for (var i = panel.Children.Count - 1; i >= 0; i--)
+        {
+            var child = panel.Children[i];
+            UnmountNative(child, i < oldKids.Count ? oldKids[i] : EmptyElement.Instance);
+            panel.Children.RemoveAt(i);
+        }
+
+        foreach (var kid in newKids)
+        {
+            panel.Children.Add(Build(kid));
+        }
+    }
+
+    /// <summary>
+    /// 卸载整棵子树：解绑控件事件，并让子树里每个子组件都进入 unmounted。
+    /// </summary>
+    /// <remarks>
+    /// 只解绑顶层控件是不够的：容器里的 <c>ComponentElement</c> 对应的
+    /// <see cref="ComponentNode"/> 会一直留在注册表里、IsMounted 仍为 true，
+    /// 于是这些已经被移出视觉树的组件还会响应状态更新、继续 patch 一棵游离的树。
+    /// </remarks>
+    private void UnmountTree(UIElement native, Element? element)
+    {
+        if (native is Border wrapper && _componentNodes.TryGetValue(wrapper, out var node))
+        {
+            // UnmountNative 会把 node 从注册表摘掉，先留住它当前渲染的 element。
+            var child = node.CurrentElement;
+            UnmountNative(native, element ?? EmptyElement.Instance);
+            if (wrapper.Child is UIElement componentChild)
+            {
+                UnmountTree(componentChild, child);
+            }
+
+            return;
+        }
+
+        UnmountNative(native, element ?? EmptyElement.Instance);
+
+        switch (native)
+        {
+            case Panel panel when ChildrenOf(element) is { } kids:
+                var list = NonNull(kids);
+                var count = Math.Min(panel.Children.Count, list.Count);
+                for (var i = 0; i < count; i++)
+                {
+                    UnmountTree(panel.Children[i], list[i]);
+                }
+
+                break;
+
+            case ScrollViewer scrollViewer
+                when element is ScrollViewerElement scrollElement &&
+                     scrollViewer.Content is UIElement content:
+                UnmountTree(content, scrollElement.Child);
+                break;
+        }
+    }
+
+    /// <summary>取容器中子元素描述（Stack / Group 才有）。</summary>
+    private static IReadOnlyList<Element?>? ChildrenOf(Element? element) => element switch
+    {
+        StackElement stack => stack.Children,
+        GroupElement group => group.Children,
+        _ => null,
+    };
 
     /// <summary>卸载原生控件：解绑事件、清理组件节点。</summary>
     private void UnmountNative(UIElement native, Element element)
@@ -730,6 +927,49 @@ internal sealed class Reconciler
             framework.VerticalAlignment = vertical;
         }
 
+        if (modifiers.MinWidth is { } minWidth)
+        {
+            framework.MinWidth = minWidth;
+        }
+
+        if (modifiers.MinHeight is { } minHeight)
+        {
+            framework.MinHeight = minHeight;
+        }
+
+        if (modifiers.MaxWidth is { } maxWidth)
+        {
+            framework.MaxWidth = maxWidth;
+        }
+
+        if (modifiers.MaxHeight is { } maxHeight)
+        {
+            framework.MaxHeight = maxHeight;
+        }
+
+        if (modifiers.IsVisible is { } isVisible)
+        {
+            framework.Visibility = isVisible ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        if (modifiers.Opacity is { } opacity)
+        {
+            framework.Opacity = opacity;
+        }
+
+        if (modifiers.ToolTip is { } toolTip)
+        {
+            ToolTipService.SetToolTip(native, toolTip);
+        }
+
+        if (modifiers.AutomationId is { } automationId)
+        {
+            AutomationProperties.SetAutomationId(native, automationId);
+        }
+
+        ApplyBackground(native, modifiers);
+        ApplyBorder(native, modifiers);
+
         if (modifiers.FontSize is { } fontSize)
         {
             switch (native)
@@ -771,6 +1011,63 @@ internal sealed class Reconciler
                     break;
                 case TextBlock text:
                     text.Padding = padding;
+                    break;
+            }
+        }
+    }
+
+    /// <summary>Background 只有部分控件类型有该属性（Control / Panel / Border）。</summary>
+    private static void ApplyBackground(UIElement native, ElementModifiers modifiers)
+    {
+        Brush? brush = modifiers.Background;
+        if (brush is null && modifiers.BackgroundColor is { } color)
+        {
+            brush = new SolidColorBrush(color);
+        }
+
+        if (brush is null)
+        {
+            return;
+        }
+
+        switch (native)
+        {
+            case Control control:
+                control.Background = brush;
+                break;
+            case Panel panel:
+                panel.Background = brush;
+                break;
+            case Border border:
+                border.Background = brush;
+                break;
+        }
+    }
+
+    private static void ApplyBorder(UIElement native, ElementModifiers modifiers)
+    {
+        if (modifiers.BorderBrush is { } borderBrush)
+        {
+            switch (native)
+            {
+                case Control control:
+                    control.BorderBrush = borderBrush;
+                    break;
+                case Border border:
+                    border.BorderBrush = borderBrush;
+                    break;
+            }
+        }
+
+        if (modifiers.BorderThickness is { } borderThickness)
+        {
+            switch (native)
+            {
+                case Control control:
+                    control.BorderThickness = borderThickness;
+                    break;
+                case Border border:
+                    border.BorderThickness = borderThickness;
                     break;
             }
         }

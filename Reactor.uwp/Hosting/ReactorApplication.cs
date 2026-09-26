@@ -6,6 +6,7 @@ using Reactor.Uwp.Hosting;
 using Windows.ApplicationModel.Activation;
 using Windows.ApplicationModel.Core;
 using Windows.Storage;
+using Windows.UI;
 using Windows.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using WindowsUIApplication = Windows.UI.Xaml.Application;
@@ -44,8 +45,32 @@ public abstract partial class ReactorApplication : WindowsUIApplication,
     /// <summary>创建根组件。</summary>
     protected abstract Component CreateRootComponent();
 
+    /// <summary>全局未处理异常处理器：完整托管堆栈落盘（含递归的 InnerException）。</summary>
+    private void OnUnhandledException(object sender, Windows.UI.Xaml.UnhandledExceptionEventArgs e)
+    {
+        // 先把堆栈同步 flush 落盘，再让它按默认流程崩溃退出。
+        // 不设置 e.Handled（保持 false）：吞异常会让 UI 留在不一致状态、进程挂起变僵尸锁文件。
+        Trace("UNHANDLED EXCEPTION: " + Flatten(e.Exception));
+    }
+
+    private static string Flatten(Exception? ex)
+    {
+        var sb = new System.Text.StringBuilder();
+        for (var cur = ex; cur is not null; cur = cur.InnerException)
+        {
+            sb.AppendLine($"  [{cur.GetType().FullName}] {cur.Message}");
+            sb.AppendLine(cur.StackTrace);
+        }
+
+        return sb.ToString();
+    }
+
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        // 全局兜底：Activate() 之后异步抛出的异常（布局/渲染）不经过下方 try 块，
+        // 未处理会 fail-fast（0xc000027b）且不带托管堆栈。这里捕获写盘、临时吞掉以观其变。
+        UnhandledException += OnUnhandledException;
+
         try
         {
             BootstrapWinUi2();
@@ -55,14 +80,47 @@ public abstract partial class ReactorApplication : WindowsUIApplication,
             // 注意：CoreApplication.Exit 不能在激活事件处理器里直接调用，这里是在 Closed 回调里调用。
             Window.Current.Closed += (_, _) => CoreApplication.Exit();
 
+            // 若通过 ReactorApp.Run 启动，应用标题与首选窗口尺寸。
+            Microsoft.UI.Reactor.ReactorApp.ApplyWindowSpec();
+
             var host = new ReactorHost(CreateRootComponent());
             Window.Current.Content ??= host.Root;
+            ExtendIntoTitleBar(host.Root);
             Window.Current.Activate();
         }
         catch (Exception ex)
         {
             Trace("FATAL: " + ex);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// 让背景材质（Mica / 亚克力）延伸到标题栏区域，否则标题栏会留一条纯色带、
+    /// 材质只出现在内容区。做法与 UWP 模板一致：扩展视图进标题栏 +
+    /// 把标题栏按钮背景设为透明，再用根 Frame 的 Padding 把内容压回标题栏下方。
+    /// </summary>
+    private static void ExtendIntoTitleBar(Windows.UI.Xaml.Controls.Frame root)
+    {
+        try
+        {
+            var coreTitleBar = CoreApplication.GetCurrentView().TitleBar;
+            coreTitleBar.ExtendViewIntoTitleBar = true;
+
+            // 必须同时把标题栏按钮刷成透明，否则三个胶囊按钮是不透明色块。
+            var titleBar = Windows.UI.ViewManagement.ApplicationView.GetForCurrentView().TitleBar;
+            titleBar.ButtonBackgroundColor = Colors.Transparent;
+            titleBar.ButtonInactiveBackgroundColor = Colors.Transparent;
+
+            // Frame 的模板把 Padding 绑到 ContentPresenter，
+            // 所以顶栏高度走 Padding：材质仍然铺满整窗，内容被压到标题栏下面。
+            void Apply() => root.Padding = new Thickness(0, coreTitleBar.Height, 0, 0);
+            Apply();
+            coreTitleBar.LayoutMetricsChanged += (_, _) => Apply();
+        }
+        catch (Exception ex)
+        {
+            Trace("ExtendIntoTitleBar failed: " + ex.Message);
         }
     }
 

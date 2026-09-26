@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using static Microsoft.UI.Reactor.Factories;
 
@@ -13,15 +14,41 @@ public sealed class CoreLoopRegression : Component
 {
     public override Element Render()
     {
+        var (backdrop, setBackdrop) = UseState(BackdropKind.None);
+
+        var options = new (BackdropKind Kind, string Label)[]
+        {
+            (BackdropKind.None, "无"),
+            (BackdropKind.Mica, "云母"),
+            (BackdropKind.MicaAlt, "云母Alt"),
+            (BackdropKind.DesktopAcrylic, "亚克力"),
+            (BackdropKind.AcrylicThin, "亚克力Thin"),
+        };
+
+        var buttons = new List<Element?>();
+        foreach (var (kind, label) in options)
+        {
+            buttons.Add(Button(
+                kind == backdrop ? $"> {label}" : label,
+                () => setBackdrop(kind)));
+        }
+
         return ScrollViewer(
             VStack(
                 TextBlock("A4.5 回归验证"),
+                TextBlock($"[5] 背景材质（当前: {backdrop}）"),
+                HStack(buttons.ToArray()),
+                // 材质不生效时的自检：NO 即为该条件命中静默回退。
+                TextBlock($"    自检: {Reactor.Uwp.Hosting.BackdropDiagnostics.Report()}"),
+                TextBlock("    亚克力若只显示橙红色 = 命中 FallbackColor（回退）"),
                 Component<ConditionalRenderSection>(),
                 Component<ParentRerenderSection>(),
                 Component<KeyedListSection>(),
-                Component<StructureChangeSection>()
+                Component<StructureChangeSection>(),
+                Component<ReactorSyntaxSection>(),
+                Component<ReentrantUpdateSection>()
             )
-        );
+        ).Backdrop(backdrop);
     }
 }
 
@@ -123,6 +150,58 @@ public sealed class ListItem : Component<ListItemProps>
             TextBlock($"count={count}"),
             Button("+", () => setCount(count + 1))
         );
+    }
+}
+
+/// <summary>
+/// 场景7：patch 途中的同步回调（重入）。
+/// TextBox 受控且 onChange 把输入规范化（转大写）→ 渲染时给 TextBox.Text 赋值 →
+/// XAML 同步触发 TextChanged → setState → 请求重渲染。
+/// 若这第二次渲染在上一轮 patch 还没跑完时同步执行，内外两层会交错改同一棵
+/// 原生树，Panel 里多出一个子控件，下一次 patch 按 element 数量索引即
+/// ArgumentOutOfRangeException。修复后应被推迟、稳定收敛。
+/// </summary>
+public sealed class ReentrantUpdateSection : Component
+{
+    public override Element Render()
+    {
+        var (text, setText) = UseState("abc");
+
+        return VStack(
+            TextBlock("[7] 重入：改动下面 TextBox，输入会被规范化为大写，不应崩溃"),
+            TextBox(text, v => setText(v.ToUpperInvariant()), header: "自动转大写"),
+            TextBlock($"当前值: {text}")
+        );
+    }
+}
+
+/// <summary>
+/// 场景6：官方 Reactor 语法兼容。这一节刻意只用与 WinUI3 版 Microsoft.UI.Reactor
+/// 相同的写法，用来验证两侧 DSL 是否真的能对上。
+/// </summary>
+public sealed class ReactorSyntaxSection : Component
+{
+    public override Element Render()
+    {
+        var (n, setN) = UseState(2);
+        var (show, setShow) = UseState(true);
+
+        // UseMemo / UseCallback / UseRef：与官方同签名
+        var doubled = UseMemo(() => n * 2, n);
+        var bump = UseCallback(() => setN(n + 1), n);
+        var renders = UseRef(0);
+        renders.Current++;
+
+        return VStack(8,
+            "[6] Reactor 语法兼容（字符串隐式转 TextBlock、spacing、组合子）",
+            $"    n={n} doubled={doubled} renders={renders.Current}",
+            HStack(8,
+                Button("+1", bump),
+                Button(show ? "隐藏" : "显示", () => setShow(!show))),
+            When(show, () => $"    When 分支：n={n}"),
+            If(n > 3, () => "    If 分支：n 已大于 3", () => "    If 分支：n 还不够大"),
+            ForEach(new[] { "A", "B", "C" }, (item, i) => $"      {i}: {item}")
+        ).Margin(0, 8, 0, 0);
     }
 }
 

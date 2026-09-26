@@ -6,16 +6,32 @@ using MuxControls = Microsoft.UI.Xaml.Controls;
 
 namespace Microsoft.UI.Reactor;
 
-/// <summary>文本节点。</summary>
-public sealed record TextBlockElement(string Text) : Element;
+/// <summary>文本节点。参数名对齐官方 Reactor（Content，不是 Text）。</summary>
+public sealed record TextBlockElement(string Content) : Element;
 
 /// <summary>按钮节点：点击回调直接以声明方式携带。</summary>
 public sealed record ButtonElement(string Label, Action? OnClick = null) : Element;
 
-/// <summary>纵向/线性布局容器，对应 <see cref="StackPanel"/>。</summary>
-public sealed record StackPanelElement(
+/// <summary>
+/// 线性布局容器，对应 <see cref="StackPanel"/>。
+/// 类型名对齐官方 Reactor（StackElement，不是 StackPanelElement）。
+/// </summary>
+public sealed record StackElement(
     Orientation Orientation,
-    IReadOnlyList<Element?> Children) : Element;
+    IReadOnlyList<Element?> Children) : Element
+{
+    /// <summary>子元素间距（UWP 的 StackPanel.Spacing）。null = 不改动。</summary>
+    public double? Spacing { get; init; }
+}
+
+/// <summary>不产生任何真实控件的占位元素（对齐官方 EmptyElement 哨兵）。</summary>
+public sealed record EmptyElement : Element
+{
+    public static readonly EmptyElement Instance = new();
+}
+
+/// <summary>不额外引入布局策略的多子元素容器，对应一个裸 Grid。</summary>
+public sealed record GroupElement(IReadOnlyList<Element?> Children) : Element;
 
 /// <summary>WinUI 2 的 InfoBar，用于验证 XamlControlsResources 纯代码加载链路。</summary>
 public sealed record InfoBarElement(
@@ -50,5 +66,5 @@ public sealed record SliderElement(
     double Max = 100,
     Action<double>? OnValueChanged = null) : Element;
 
-/// <summary>滚动容器，对应 <see cref="ScrollViewer"/>，Content 为单个子元素。</summary>
-public sealed record ScrollViewerElement(Element? Content = null) : Element;
+/// <summary>滚动容器，对应 <see cref="ScrollViewer"/>。参数名对齐官方（Child）。</summary>
+public sealed record ScrollViewerElement(Element? Child = null) : Element;

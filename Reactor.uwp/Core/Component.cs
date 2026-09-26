@@ -21,13 +21,28 @@ public abstract class Component
 
     /// <summary>
     /// 声明一个状态槽。返回当前值与 setter；setter 在值变化时请求重渲染。
+    /// 元组元素名与官方 Reactor 一致（<c>Value</c> / <c>Set</c>）。
     /// </summary>
-    protected (T value, Action<T> setValue) UseState<T>(T initial = default!, bool threadSafe = false)
+    protected (T Value, Action<T> Set) UseState<T>(T initial = default!, bool threadSafe = false)
     {
-        // 委托给 RenderContext，保持与参考项目相同的签名。
-        var (value, set) = Context.UseState(initial, threadSafe);
-        return (value, set);
+        return Context.UseState(initial, threadSafe);
     }
+
+    /// <summary>缓存一次计算结果，依赖不变则复用上次的值。</summary>
+    protected T UseMemo<T>(Func<T> factory, params object[] dependencies) =>
+        Context.UseMemo(factory, dependencies);
+
+    /// <summary>缓存一个回调委托，依赖不变则引用稳定。</summary>
+    protected Action UseCallback(Action callback, params object[] dependencies) =>
+        Context.UseCallback(callback, dependencies);
+
+    /// <summary>声明一个跨渲染保持的可变引用。</summary>
+    protected Ref<T> UseRef<T>(T initialValue = default!) =>
+        Context.UseRef(initialValue);
+
+    /// <summary>读取祖先元素 Provide 的 Context 值。</summary>
+    protected T UseContext<T>(Context<T> context) =>
+        Context.UseContext(context);
 
     /// <summary>声明一个状态槽，setter 支持函数式更新（接收旧值返回新值）。</summary>
     protected (T Value, Action<Func<T, T>> Update) UseReducer<T>(
@@ -83,7 +98,7 @@ public abstract class Component<TProps> : Component, IPropsReceiver
     public TProps Props { get; internal set; } = default!;
 
     /// <summary>判断 props 变化时是否需要重渲染。默认：结构相等比较。</summary>
-    protected virtual bool ShouldUpdate(TProps? oldProps, TProps? newProps) =>
+    protected internal virtual bool ShouldUpdate(TProps? oldProps, TProps? newProps) =>
         !Equals(oldProps, newProps);
 
     void IPropsReceiver.SetProps(object props)

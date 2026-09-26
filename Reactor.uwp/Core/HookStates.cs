@@ -62,6 +62,29 @@ internal sealed class EffectHookState : HookState
     public bool HasRun;
 }
 
+/// <summary>UseMemo 的槽位：缓存上次计算结果与依赖快照。</summary>
+internal sealed class MemoHookState<T> : HookState
+{
+    public T Value = default!;
+    public object?[]? Dependencies;
+    public bool HasValue;
+}
+
+/// <summary>UseCallback 的槽位：缓存上次返回的委托与依赖快照。</summary>
+internal sealed class CallbackHookState : HookState
+{
+    public Action? Callback;
+    public object?[]? Dependencies;
+}
+
+/// <summary>UseRef 的槽位：跨渲染保持同一个可变引用。</summary>
+internal sealed class RefHookState<T> : HookState
+{
+    public Ref<T> Ref { get; }
+
+    public RefHookState(T initialValue) => Ref = new Ref<T>(initialValue);
+}
+
 /// <summary>Hook 调用顺序错误：每次渲染必须以相同顺序调用 hook。</summary>
 public sealed class HookOrderException : InvalidOperationException
 {
