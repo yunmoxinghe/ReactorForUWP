@@ -8,4 +8,10 @@
     <IsAotCompatible>true</IsAotCompatible>
     <DisableRuntimeMarshalling>true</DisableRuntimeMarshalling>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 2.8.7+ 才提供 net8.0-windows 投影程序集，可被 UseUwp 的 net10.0-windows TFM 选中；
+         2.8.6 仅有 lib/uap10.0 老 winmd，NuGet 不会选为编译引用（CS0234）。 -->
+    <PackageReference Include="Microsoft.UI.Xaml" Version="2.8.7" />
+  </ItemGroup>
 </Project>

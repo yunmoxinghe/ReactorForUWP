@@ -1,0 +1,18 @@
+# Visual Studio 缓存
+.vs/
+
+# .NET / UWP 构建产物
+bin/
+obj/
+
+# PRI 工具 dump 目录
+.pridump/
+
+# MSIX / AppX 打包产物
+AppPackages/
+BundleArtifacts/
+
+# 用户级 / IDE 配置文件
+*.user
+*.suo
+*.userosscache

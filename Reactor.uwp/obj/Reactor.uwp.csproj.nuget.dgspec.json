@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "D:\\fluentapps\\repos\\test\\ReacroeForUWP\\Reactor.uwp\\Reactor.uwp.csproj": {}
+    "D:\\fluentapps\\repos\\test\\ReactorForUWP\\Reactor.uwp\\Reactor.uwp.csproj": {}
   },
   "projects": {
-    "D:\\fluentapps\\repos\\test\\ReacroeForUWP\\Reactor.uwp\\Reactor.uwp.csproj": {
+    "D:\\fluentapps\\repos\\test\\ReactorForUWP\\Reactor.uwp\\Reactor.uwp.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "D:\\fluentapps\\repos\\test\\ReacroeForUWP\\Reactor.uwp\\Reactor.uwp.csproj",
+        "projectUniqueName": "D:\\fluentapps\\repos\\test\\ReactorForUWP\\Reactor.uwp\\Reactor.uwp.csproj",
         "projectName": "Reactor.uwp",
-        "projectPath": "D:\\fluentapps\\repos\\test\\ReacroeForUWP\\Reactor.uwp\\Reactor.uwp.csproj",
+        "projectPath": "D:\\fluentapps\\repos\\test\\ReactorForUWP\\Reactor.uwp\\Reactor.uwp.csproj",
         "packagesPath": "C:\\Users\\gold\\.nuget\\packages\\",
-        "outputPath": "D:\\fluentapps\\repos\\test\\ReacroeForUWP\\Reactor.uwp\\obj\\",
+        "outputPath": "D:\\fluentapps\\repos\\test\\ReactorForUWP\\Reactor.uwp\\obj\\",
         "projectStyle": "PackageReference",
         "fallbackFolders": [
           "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages",
@@ -60,6 +60,10 @@
               "target": "Package",
               "version": "[10.0.12, )",
               "autoReferenced": true
+            },
+            "Microsoft.UI.Xaml": {
+              "target": "Package",
+              "version": "[2.8.7, )"
             }
           },
           "imports": [
