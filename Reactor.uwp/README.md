@@ -29,7 +29,7 @@ UWP + WinUI 2 的声明式 UI 框架：用 C# 描述界面，不写 XAML。
 ## 安装
 
 ```xml
-<PackageReference Include="Reactor.Uwp" Version="0.1.0-alpha.2" />
+<PackageReference Include="Reactor.Uwp" Version="0.1.0-alpha.3" />
 ```
 
 消费方项目要求（与本机工程一致）：

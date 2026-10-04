@@ -15,6 +15,17 @@
     <ReactorNativeDll>$(ReactorNativeDir)\Reactor.Uwp.Native.dll</ReactorNativeDll>
   </PropertyGroup>
 
+  <!-- AppX 目录名归一化。
+       OutDir 有两种形态：不带 RID 时是 bin\x64\Debug\<tfm>\，要再拼一层
+       win-$(Platform)\AppX\；而开了 PublishAot / 只声明一个 RuntimeIdentifier 的项目
+       是 RID 感知构建，OutDir 自己就带 win-x64，再拼会变成
+       win-x64\win-x64\AppX\（本机示例开 AOT 后就是这么撞出来的）。
+       所以先判断是否已以 win-$(Platform) 结尾，是的话直接在它下面建 AppX。 -->
+  <PropertyGroup>
+    <ReactorAppxDir>$(OutDir)win-$(Platform)\AppX\</ReactorAppxDir>
+    <ReactorAppxDir Condition="$(OutDir.EndsWith('win-$(Platform)\'))">$(OutDir)AppX\</ReactorAppxDir>
+  </PropertyGroup>
+
   <!-- 常规输出目录：覆盖不带 AppX 子目录的构建形态。 -->
   <ItemGroup Condition="Exists('$(ReactorNativeDll)')">
     <None Include="$(ReactorNativeDll)" Visible="false">
@@ -29,7 +40,7 @@
           AfterTargets="Build;Publish"
           Condition="Exists('$(ReactorNativeDll)') and '$(OutDir)' != ''">
     <Copy SourceFiles="$(ReactorNativeDll)"
-          DestinationFolder="$(OutDir)win-$(Platform)\AppX\"
+          DestinationFolder="$(ReactorAppxDir)"
           SkipUnchangedFiles="true" />
   </Target>
 
