@@ -142,6 +142,27 @@ PowerShell 输出容易被吞，落文件再读：
 
 **用 `winapp run .` 跑，别只 build。** 打包验证加 `-p:GenerateAppxPackageOnBuild=true`。
 
+### AOT 发布：沙箱拦 `reg.exe` → 链接器找不到 `advapi32.lib`
+
+本机安全策略把 `reg.exe` 列进黑名单，而 ILC **靠 `reg.exe` 探测 Windows SDK 路径**。
+探测失败 → `LIB` 没设 → 链接期直接：
+
+```
+LINK : fatal error LNK1181: 无法打开输入文件"advapi32.lib"
+```
+
+看起来像代码/依赖坏了，其实是环境。手动补 `LIB` 再发布即可（PowerShell）：
+
+```powershell
+$sdk = "C:\Program Files (x86)\Windows Kits\10\Lib\10.0.26100.0"
+$env:LIB = "$sdk\um\x64;$sdk\ucrt\x64;$env:LIB"
+dotnet publish UwpApp\UwpApp.csproj -c Release -p:Platform=x64 -r win-x64 -p:PublishAot=true
+```
+
+**注意退出码会骗人**：`reg.exe` 被拦时 stderr 有 `PROGRAM BLOCKED BY SECURITY POLICY`，
+即便 publish 实际是成功的（产物已生成），外层也可能把它判成 failed。
+以**产物**为准，不看退出码：exe 的 PE 机器码应为 `0x8664`，且同目录不该有托管主程序集。
+
 ### 示例项目可能引用的是发布包，不是源码
 
 本仓库 `samples/Reactor.Template` 引的是 NuGet 包 `Reactor.Uwp 0.1.0-alpha.4`，
