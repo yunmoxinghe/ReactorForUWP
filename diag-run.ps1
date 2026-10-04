@@ -2,6 +2,11 @@
 #
 # 包 GUID 会随部署轮换，所以不写死 PackageFamilyName：
 # 直接扫 %LOCALAPPDATA%\Packages 找带 LocalState\ReactorRuns 的那个包目录。
+#
+# 用法：.\diag-run.ps1 [-Mode 0|1|2|3|4|5]
+#   Mode 缺省 = 不改，沿用 App 里上一次读到的（首次跑为 3）。
+#   探针启动时读 LocalState\probe-mode.txt，所以切模式不用重新编译。
+param([int]$Mode = -1)
 $ErrorActionPreference = 'Continue'
 $proj = 'D:\fluentapps\repos\test\ReactorForUWP\UwpApp\UwpApp.csproj'
 $base = 'D:\fluentapps\repos\test\ReactorForUWP\UwpApp\bin\x64\Debug\net10.0-windows10.0.26100.0\win-x64'
@@ -48,6 +53,13 @@ if (Test-Path "$base\Reactor.Uwp.Native.dll") {
   Copy-Item "$base\Reactor.Uwp.Native.dll" "$base\AppX\" -Force
 } else {
   "=== 缺 Reactor.Uwp.Native.dll（预编译产物不在 prebuilt\x64），原生工厂跑不起来 ==="
+}
+if ($Mode -ge 0) {
+  Set-Content -Path (Join-Path $pkg.FullName 'LocalState\probe-mode.txt') -Value "$Mode" -Encoding ASCII
+  "mode = $Mode (写入 probe-mode.txt)"
+} else {
+  $cur = Join-Path $pkg.FullName 'LocalState\probe-mode.txt'
+  "mode = $(if (Test-Path $cur) { Get-Content $cur } else { '3（缺省）' })"
 }
 $before = @(Get-ChildItem $runsRoot -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
 Start-Process "shell:AppsFolder\$pf!App"

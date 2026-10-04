@@ -43,9 +43,9 @@ namespace UwpApp
 {
     public sealed class __FactoryRuntimeProbeApp : Component
     {
-        // ================== 切模式后重新编译 ==================
-        internal const int MODE = 3;
-        // ====================================================
+        // 模式：优先读 LocalState\probe-mode.txt，没有就用缺省值。
+        // 文件里写 0~5 之间一个数字即可切模式，不必重新编译 + 重新部署。
+        internal static readonly int MODE = ReadModeOverride(3);
 
         internal const int ItemCount = 5000;
         internal const double ItemHeight = 32;
@@ -76,6 +76,37 @@ namespace UwpApp
         private static readonly List<(string Name, int Index, Action? Mutate)> s_steps = new();
         private static int s_stepIndex = -1;
         private static string s_stepName = "init";
+
+        /// <summary>
+        /// 读 <c>LocalState\probe-mode.txt</c> 覆盖模式（内容就是一个 0~5 的数字）。
+        /// </summary>
+        /// <remarks>
+        /// 六种对照要各跑一轮，每次改 const 都得重编 + 重部署一遍很浪费；
+        /// 改成从本地状态读之后，切模式只改文件再启动即可。读不到就退回缺省值。
+        /// </remarks>
+        private static int ReadModeOverride(int fallback)
+        {
+            try
+            {
+                var path = System.IO.Path.Combine(
+                    Windows.Storage.ApplicationData.Current.LocalFolder.Path, "probe-mode.txt");
+
+                if (!System.IO.File.Exists(path))
+                {
+                    return fallback;
+                }
+
+                var text = System.IO.File.ReadAllText(path).Trim();
+                return int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var mode)
+                    && mode is >= 0 and <= 5
+                        ? mode
+                        : fallback;
+            }
+            catch
+            {
+                return fallback;
+            }
+        }
 
         public override Element Render()
         {
