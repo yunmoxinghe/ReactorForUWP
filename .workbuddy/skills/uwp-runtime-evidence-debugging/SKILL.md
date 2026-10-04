@@ -222,10 +222,17 @@ publish 可能实际成功却被判失败。检查产物：exe 存在、PE 机�
 
 ### 示例项目可能引用的是发布包，不是源码
 
-本仓库 `samples/Reactor.Template` 引的是 NuGet 包 `Reactor.Uwp 0.1.0-alpha.4`，
+本仓库 `samples/*` 引的是 **NuGet 发布包**（看 csproj 里锁的版本），
 `UwpApp` 才是 `ProjectReference`。所以**框架侧的修复示例项目吃不到**，
 要么就地做一份等价实现（幂等，新旧包都对），要么用包里已有的 API。
 给框架加新参数前先看 csproj 的引用方式，否则会编译失败。
+
+**就地实现是欠债，不是解法**：等含该修复的版本发到 nuget.org、示例把版本号升上来，
+就必须删掉那份就地实现。留着会变成"框架改了、这里没改"的两处不一致——
+2026-10-05 清过一次：`MainPage.cs` / `BlankTemplateApp.cs` 各有一份 `ToAppx()`
+（`file:///` → `ms-appx:///`），框架 `Internal/PackUri.cs` 修好后包升到 alpha.5，
+两份都删了。判断能不能删：确认新包里真的有那段逻辑（解开 nupkg 在
+`lib\net10.0-windows10.0.26100\Reactor.uwp.dll` 里搜类型/方法名），别靠版本号猜。
 
 ---
 

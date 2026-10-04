@@ -3,7 +3,7 @@
 两个独立的 UWP 应用，**都只装 NuGet 包，不引用仓库里的框架源码**：
 
 ```xml
-<PackageReference Include="Reactor.Uwp" Version="0.1.0-alpha.4" />
+<PackageReference Include="Reactor.Uwp" Version="0.1.0-alpha.5" />
 ```
 
 这样写是有意的——示例能编译通过，就说明**包里导出的公共 API 真的够用**。
@@ -48,13 +48,16 @@ dotnet restore samples/Reactor.Template/Reactor.Template.csproj
 
 ### 改了框架源码之后：必须走一遍的本地循环
 
-alpha.4 还没发到 nuget.org，本机验证只能吃本地 pack 的包。于是有一条闭环，
-**漏掉中间任何一步，示例都会静默跑旧代码**：NuGet 只认"这个版本在不在缓存里"，
-不认内容是不是换过——同名版本重新 pack，restore 照样命中旧的那份。
+示例 csproj 里锁的那个版本**是 nuget.org 上真实存在的**，平时改示例不用走这套。
+只有一种情况需要：**框架改了、但还没发新版本**，本机想提前验。那时只能吃本地
+pack 的包，于是有一条闭环，**漏掉中间任何一步，示例都会静默跑旧代码**：NuGet
+只认"这个版本在不在缓存里"，不认内容是不是换过——同名版本重新 pack，restore
+照样命中旧的那份。
 
-"云母不跟随应用主题"就是这么来的：示例还原到的是修复前 pack 的 alpha.4，
-那份包里连 `ApplyTheme` 方法都没有，而 `UwpApp` 走 `ProjectReference` 引源码、
-吃的是新代码，于是"uwpapp 什么都对、示例全是 bug"。
+"云母不跟随应用主题"就是这么来的：示例还原到的是修复前 pack 的那份 alpha.4，
+包里连 `ApplyTheme` 方法都没有（alpha.4 当时从没发到 nuget.org，本机那份是本地
+pack 的），而 `UwpApp` 走 `ProjectReference` 引源码、吃的是新代码，于是
+"uwpapp 什么都对、示例全是 bug"。
 
 ```bash
 # 1. 重新打包。别带 -p:Platform=x64：会把托管程序集编成 x64 专用，
@@ -62,7 +65,7 @@ alpha.4 还没发到 nuget.org，本机验证只能吃本地 pack 的包。于�
 dotnet pack Reactor.uwp/Reactor.uwp.csproj -c Release -o D:/fluentapps/local-nuget
 
 # 2. 删掉同名版本的全局缓存，否则第 1 步白做
-Remove-Item "$env:USERPROFILE\.nuget\packages\reactor.uwp\0.1.0-alpha.4" -Recurse -Force
+Remove-Item "$env:USERPROFILE\.nuget\packages\reactor.uwp\<版本>" -Recurse -Force
 
 # 3. 还原 + 编译
 dotnet restore samples/Reactor.Template/Reactor.Template.csproj
@@ -73,7 +76,7 @@ dotnet build   samples/Reactor.Template/Reactor.Template.csproj -c Debug -p:Plat
 有没有你要的那个方法：
 
 ```powershell
-Select-String -Path "$env:USERPROFILE\.nuget\packages\reactor.uwp\0.1.0-alpha.4\lib\net10.0-windows10.0.26100\Reactor.uwp.dll" `
+Select-String -Path "$env:USERPROFILE\.nuget\packages\reactor.uwp\<版本>\lib\net10.0-windows10.0.26100\Reactor.uwp.dll" `
               -Pattern "ApplyTheme","RefreshBackdropForTheme" -SimpleMatch
 ```
 

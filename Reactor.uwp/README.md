@@ -57,7 +57,7 @@ IME / selection replacement 会连发多个 `TextChanged`，无条件删除登�
 ## 安装
 
 ```xml
-<PackageReference Include="Reactor.Uwp" Version="0.1.0-alpha.4" />
+<PackageReference Include="Reactor.Uwp" Version="0.1.0-alpha.5" />
 ```
 
 消费方项目要求（与本机工程一致）：
