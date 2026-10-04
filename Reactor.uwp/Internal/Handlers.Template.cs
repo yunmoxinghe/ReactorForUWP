@@ -18,7 +18,7 @@ namespace Reactor.Uwp.Internal;
 /// </summary>
 internal sealed class HyperlinkButtonHandler : ElementHandler<HyperlinkButtonElement, HyperlinkButton>
 {
-    private static readonly Dictionary<HyperlinkButton, Action?> Callbacks = new();
+    private static readonly WeakTable<HyperlinkButton, Action?> Callbacks = new();
 
     protected override HyperlinkButton Mount(Reconciler reconciler, HyperlinkButtonElement element)
     {
@@ -242,10 +242,11 @@ internal sealed class BitmapIconHandler : ElementHandler<BitmapIconElement, Bitm
 internal sealed class BreadcrumbBarHandler
     : ElementHandler<BreadcrumbBarElement, MuxControls.BreadcrumbBar>
 {
-    private static readonly Dictionary<MuxControls.BreadcrumbBar, Action<int>?> Callbacks = new();
+    private static readonly WeakTable<MuxControls.BreadcrumbBar, Action<int>?> Callbacks = new();
 
     /// <summary>每个控件的向量载体：只为拿到一个真 WinRT 向量喂 ItemsSource。</summary>
-    private static readonly Dictionary<MuxControls.BreadcrumbBar, ItemsControl> Carriers = new();
+    // 载体随 bar 一起回收：bar 不可达 → 弱键条目自动消失 → 载体释放。
+    private static readonly WeakTable<MuxControls.BreadcrumbBar, ItemsControl> Carriers = new();
 
     /// <summary>
     /// 查不到资源的样式键。存下来是为了别每帧重复 Load 同一个必然失败的字符串
@@ -542,7 +543,7 @@ internal abstract class SettingsCardHandlerBase<TElement, TControl> : ElementHan
     /// 每个卡片上当前挂着的图标（内容槽的"已挂载实例"）。
     /// 静态字段按封闭泛型类型各一份，因此 SettingsCard / SettingsExpander 互不干扰。
     /// </summary>
-    private static readonly Dictionary<TControl, (Element Element, IconElement Native)> IconSlots = new();
+    private static readonly WeakTable<TControl, (Element Element, IconElement Native)> IconSlots = new();
 
     protected abstract string? HeaderOf(TElement element);
     protected abstract string? DescriptionOf(TElement element);
@@ -675,7 +676,7 @@ internal abstract class SettingsCardHandlerBase<TElement, TControl> : ElementHan
 /// <summary>设置页的一行设置项（Toolkit SettingsCard）。</summary>
 internal sealed class SettingsCardHandler : SettingsCardHandlerBase<SettingsCardElement, ToolkitControls.SettingsCard>
 {
-    private static readonly Dictionary<ToolkitControls.SettingsCard, Action?> Callbacks = new();
+    private static readonly WeakTable<ToolkitControls.SettingsCard, Action?> Callbacks = new();
 
     protected override ToolkitControls.SettingsCard Mount(Reconciler reconciler, SettingsCardElement element)
     {

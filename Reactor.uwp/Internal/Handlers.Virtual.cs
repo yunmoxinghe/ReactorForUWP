@@ -4,8 +4,10 @@
 // 但 WinUI 2 的 C# 投影把该接口设为 internal（CS0122），C# 侧实现不了，于是
 // UWP 上改成了 ScrollViewer + Canvas 的自绘虚拟化。后来用 C++/WinRT 写了
 // Reactor.Uwp.Native.dll 把接口补上（见 Internal/NativeElementFactory.cs 文件头），
-// 压测页（UwpApp/__FactoryProbe.cs，M1 档）跑通了，这条路才真正可用——
-// 现在默认就是它，自绘只在桥不可用时（x86 没有预编译产物）兜底。
+// 压测页（UwpApp/FactoryProbePage.cs，M1 档）跑通了，这条路才真正可用——
+// 现在默认就是它，自绘只在桥加载失败（dll 没落到 AppX）时兜底。
+// 注：项目只支持 x64 / arm64，两个架构都有原生产物，所以这不是架构分支，
+// 是"部署缺文件"的防御。
 //
 // 【下标从哪来 —— 别用 Data 反查】WinUI 2.8 的 ElementFactoryGetArgs 只有
 // Data / Parent，没有 WinUI 3 的 Index。所以喂给 ItemsSource 的是**下标字符串**
@@ -105,7 +107,9 @@ internal sealed class VirtualizingListHandler : ElementHandler<VirtualizingListE
         public Dictionary<object, Mounted> ByKey { get; } = new();
     }
 
-    private static readonly Dictionary<ScrollViewer, State> States = new();
+    // State 里持有 Reconciler 与全部子 slot：以前强引用 ScrollViewer，一旦
+    // Unmount 没走到就整棵树泄漏。弱键之后生命周期跟着 ScrollViewer 自己。
+    private static readonly WeakTable<ScrollViewer, State> States = new();
 
     protected override ScrollViewer Mount(Reconciler reconciler, VirtualizingListElement element)
     {
@@ -255,7 +259,7 @@ internal sealed class VirtualizingListHandler : ElementHandler<VirtualizingListE
         }
         catch (Exception ex)
         {
-            // 桥不可用（x86 没有预编译产物 / dll 没落到 AppX）就是这条路。
+            // 桥加载失败（dll 没落到 AppX / 架构产物缺失）就是这条路。
             // 记一次日志就够：每轮渲染都刷会把日志淹掉。
             Reactor.Uwp.Hosting.ReactorApplication.Trace(
                 $"[reactor] 虚拟化: ItemsRepeater 路径不可用，退回自绘 — [{ex.GetType().Name}] {ex.Message}");

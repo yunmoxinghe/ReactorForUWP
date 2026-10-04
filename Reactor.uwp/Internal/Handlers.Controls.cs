@@ -13,7 +13,7 @@ namespace Reactor.Uwp.Internal;
 /// <summary>下拉框。</summary>
 internal sealed class ComboBoxHandler : ElementHandler<ComboBoxElement, ComboBox>
 {
-    private static readonly Dictionary<ComboBox, Action<int>?> Callbacks = new();
+    private static readonly WeakTable<ComboBox, Action<int>?> Callbacks = new();
 
     /// <summary><c>SelectedIndex</c> 受控：写回会触发 SelectionChanged，需要回声抑制。</summary>
     private static readonly EchoGuard SelectionEcho = new();
@@ -118,7 +118,7 @@ internal sealed class ComboBoxHandler : ElementHandler<ComboBoxElement, ComboBox
 /// <summary>开关（UWP 的 Toggled 事件是唯一的变更通知，没有 IsOnChanged）。</summary>
 internal sealed class ToggleSwitchHandler : ElementHandler<ToggleSwitchElement, ToggleSwitch>
 {
-    private static readonly Dictionary<ToggleSwitch, Action<bool>?> Callbacks = new();
+    private static readonly WeakTable<ToggleSwitch, Action<bool>?> Callbacks = new();
 
     /// <summary><c>IsOn</c> 受控：写回会触发 Toggled，需要回声抑制。</summary>
     private static readonly EchoGuard ToggleEcho = new();
@@ -201,7 +201,7 @@ internal sealed class ToggleSwitchHandler : ElementHandler<ToggleSwitchElement, 
 /// <summary>单选按钮：Checked / Unchecked 两个事件合成为 bool 回调。</summary>
 internal sealed class RadioButtonHandler : ElementHandler<RadioButtonElement, RadioButton>
 {
-    private static readonly Dictionary<RadioButton, Action<bool>?> Callbacks = new();
+    private static readonly WeakTable<RadioButton, Action<bool>?> Callbacks = new();
 
     /// <summary><c>IsChecked</c> 受控：写回会触发 Checked/Unchecked，需要回声抑制。</summary>
     private static readonly EchoGuard CheckEcho = new();
@@ -289,7 +289,7 @@ internal sealed class RadioButtonHandler : ElementHandler<RadioButtonElement, Ra
 /// <summary>WinUI 2 的 RadioButtons 分组控件。</summary>
 internal sealed class RadioButtonsHandler : ElementHandler<RadioButtonsElement, MuxControls.RadioButtons>
 {
-    private static readonly Dictionary<MuxControls.RadioButtons, Action<int>?> Callbacks = new();
+    private static readonly WeakTable<MuxControls.RadioButtons, Action<int>?> Callbacks = new();
 
     /// <summary><c>SelectedIndex</c> 受控：写回会触发 SelectionChanged，需要回声抑制。</summary>
     private static readonly EchoGuard SelectionEcho = new();
@@ -567,7 +567,7 @@ internal abstract class ItemsViewHandler<TElement, TControl> : ElementHandler<TE
     where TElement : Element
     where TControl : ListViewBase
 {
-    private static readonly Dictionary<TControl, (Action<int>? Selection, Action<int>? Click)> Callbacks = new();
+    private static readonly WeakTable<TControl, (Action<int>? Selection, Action<int>? Click)> Callbacks = new();
 
     protected abstract IReadOnlyList<Element?> ItemsOf(TElement element);
     protected abstract Optional<int> SelectedIndexOf(TElement element);
@@ -704,7 +704,7 @@ internal sealed class GridViewHandler : ItemsViewHandler<GridViewElement, GridVi
 /// <summary>WinUI 2 的 NavigationView：左侧菜单 + 内容区 + 返回按钮。</summary>
 internal sealed class NavigationViewHandler : ElementHandler<NavigationViewElement, MuxControls.NavigationView>
 {
-    private static readonly Dictionary<
+    private static readonly WeakTable<
         MuxControls.NavigationView,
         (Action<int>? Selection, Action<int>? Invoked, Action? Back)> Callbacks = new();
 
