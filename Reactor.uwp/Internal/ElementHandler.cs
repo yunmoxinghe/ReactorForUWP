@@ -222,6 +222,9 @@ internal static class ElementHandlerRegistry
         Register<FrameElement, FrameHandler>();
         Register<VirtualizingListElement, VirtualizingListHandler>();
 
+        // 逃生舱：把一棵原生控件树挂进 Reactor 布局（Native()）
+        Register<NativeElement, NativeHandler>();
+
         // 第三方容器的单子元素访问器（不改这里就会每轮重建整棵子树）
         SingleChildAccessor.Register<ToolkitControls.SettingsExpander>(control => (
             () => control.Content as UIElement,
