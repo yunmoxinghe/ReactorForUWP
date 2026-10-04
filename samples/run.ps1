@@ -17,9 +17,12 @@
 # 用法：
 #   powershell -ExecutionPolicy Bypass -File samples/run.ps1                  # Template
 #   powershell -ExecutionPolicy Bypass -File samples/run.ps1 -Project Gallery
+#   powershell -ExecutionPolicy Bypass -File samples/run.ps1 -Platform arm64
 param(
     [ValidateSet('Template', 'Gallery')]
-    [string]$Project = 'Template'
+    [string]$Project = 'Template',
+    [ValidateSet('x64', 'arm64')]
+    [string]$Platform = 'x64'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,7 +31,7 @@ $ProgressPreference = 'SilentlyContinue'
 
 $repoRoot  = Split-Path -Parent $PSScriptRoot
 $projDir   = Join-Path $repoRoot "samples/Reactor.$Project"
-$layout    = Join-Path $projDir "bin/x64/Debug/net10.0-windows10.0.26100.0/win-x64"
+$layout    = Join-Path $projDir "bin/$Platform/Debug/net10.0-windows10.0.26100.0/win-$Platform"
 $manifest  = Join-Path $layout "AppxManifest.xml"
 $srcManifest = Join-Path $projDir "Package.appxmanifest"
 $exe       = Join-Path $layout "Reactor.$Project.exe"
@@ -41,8 +44,9 @@ if (-not (Test-Path $exe)) {
 #
 # 源 Package.appxmanifest 是给 VS 的，直接拿去注册不够：
 #   - 缺 ProcessorArchitecture（松散注册要求写死）
-#   - Resource Language 是 x-generate 占位
+#   - Resource Language 是具体语言而不是 x-generate 占位
 #   - Executable 是 $targetnametoken$.exe 令牌
+#   - ms-resource: 引用解析不了（没有 resources.pri，见下）
 #   - 缺两条框架依赖（WinUI 2 / VCLibs），那是 VS 的 WinUI targets 注入的
 if (-not (Test-Path $manifest)) {
     if (-not (Test-Path $srcManifest)) { throw "找不到源清单 $srcManifest" }
@@ -53,11 +57,34 @@ if (-not (Test-Path $manifest)) {
 
     # 用 SetAttribute：PowerShell 的 XML 适配器只暴露文档里已经存在的属性，
     # 直接 $node.X = v 会报 "property cannot be found"。
-    $x.Package.Identity.SetAttribute('ProcessorArchitecture', 'x64')
+    $x.Package.Identity.SetAttribute('ProcessorArchitecture', $Platform)
     $x.Package.Applications.Application.SetAttribute('Executable', "Reactor.$Project.exe")
 
-    $resource = $x.SelectSingleNode('//*[local-name()="Resource"]')
-    if ($resource) { $resource.SetAttribute('Language', 'ZH-CN') }
+    # 清单里 DisplayName / Description 走 ms-resource:，正常由 resources.pri 解析，
+    # 而 CLI 构建不生成 pri，松散注册时解析不到就会报资源错误。这里按
+    # DefaultLanguage（zh-CN）的 resw 把引用换成字面值。
+    $resw = Join-Path $projDir "Strings/zh-CN/Resources.resw"
+    if (Test-Path $resw) {
+        [xml]$res = Get-Content $resw
+        $strings = @{}
+        foreach ($d in $res.root.data) { $strings[$d.name] = $d.value }
+        foreach ($node in $x.SelectNodes('//*')) {
+            foreach ($a in @($node.Attributes)) {
+                if ($a.Value -match '^ms-resource:(.+)$' -and $strings.ContainsKey($Matches[1])) {
+                    $a.Value = $strings[$Matches[1]]
+                }
+            }
+        }
+    }
+
+    # 只留一个 Resource 节点：松散注册没 pri，列多种语言等于声明了拿不出的资源。
+    $resources = $x.SelectNodes('//*[local-name()="Resource"]')
+    if ($resources.Count -gt 0) {
+        $resources[0].SetAttribute('Language', 'ZH-CN')
+        for ($i = $resources.Count - 1; $i -gt 0; $i--) {
+            [void]$resources[$i].ParentNode.RemoveChild($resources[$i])
+        }
+    }
 
     # 框架依赖：MinVersion 要跟本机装的一致，写低了注册会报依赖不满足。
     # VCLibs 分 Debug / Release，默认按 Debug（示例默认跑 Debug）。

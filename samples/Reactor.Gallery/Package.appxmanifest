@@ -4,7 +4,8 @@
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
-  IgnorableNamespaces="uap mp">
+  xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+  IgnorableNamespaces="uap uap5 mp">
 
   <Identity
     Name="E362DB2E-EDAD-4411-B1F6-6355F8CFB661"
@@ -14,18 +15,19 @@
   <mp:PhoneIdentity PhoneProductId="E362DB2E-EDAD-4411-B1F6-6355F8CFB661" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
   <Properties>
-    <DisplayName>Reactor Samples</DisplayName>
+    <DisplayName>ms-resource:AppDisplayName</DisplayName>
     <PublisherDisplayName>yunmoxing</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
 
   <Dependencies>
     <!-- 与 csproj 的 TargetPlatformMinVersion / TargetPlatformVersion 对齐。 -->
-    <TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+    <TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
   </Dependencies>
 
   <Resources>
-    <Resource Language="x-generate"/>
+    <Resource Language="en-US" />
+    <Resource Language="zh-CN" />
   </Resources>
 
   <Applications>
@@ -33,14 +35,24 @@
       Executable="$targetnametoken$.exe"
       EntryPoint="Reactor.Gallery.App">
       <uap:VisualElements
-        DisplayName="Reactor Samples"
+        DisplayName="ms-resource:AppDisplayName"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png"
-        Description="Reactor.Uwp 示例集"
+        Description="ms-resource:AppDescription"
         BackgroundColor="transparent">
-        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png"/>
-        <uap:SplashScreen Image="Assets\SplashScreen.png" />
+        <uap:DefaultTile
+          Wide310x150Logo="Assets\Wide310x150Logo.png"
+          Square71x71Logo="Assets\SmallTile.png"
+          Square310x310Logo="Assets\LargeTile.png"/>
+        <!-- uap5:Optional="true"：Assets 只有 SplashScreen.scale-*.png，没有不限定符的
+             那一份。松散注册（无 resources.pri）时会报 0x80070002，标 Optional 即不再是硬要求。 -->
+        <uap:SplashScreen Image="Assets\SplashScreen.png" uap5:Optional="true" />
       </uap:VisualElements>
     </Application>
   </Applications>
+
+  <Capabilities>
+    <!-- 模板默认给网络权限；用不到就删掉这一行。 -->
+    <Capability Name="internetClient" />
+  </Capabilities>
 </Package>

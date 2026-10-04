@@ -2,7 +2,9 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
-    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <!-- 19041 而不是 17763：官方 UWP + 现代 .NET 模板用的就是这个下限，
+         再低会撞上 WinUI 2.8 和新 XAML 栈依赖的一部分 API。 -->
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
     <Nullable>enable</Nullable>
     <UseUwp>true</UseUwp>
 
@@ -13,11 +15,15 @@
          VS 也不会把项目当可部署的 UWP 应用——表现就是 F5 只跑裸 exe、没有包身份。 -->
     <UseUwpTools>true</UseUwpTools>
 
-    <!-- 只留 x64：Reactor.Uwp 的原生桥（给 ItemsRepeater 补的 IElementFactory）
-         目前只有 win-x64 预编译产物。等其它架构补上再放开 Platforms。 -->
-    <Platforms>x64</Platforms>
-    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <!-- 与 UWP-Blank-Template 一致：x64 + arm64 两个平台，各配一个 pubxml
+         （Properties/PublishProfiles/win-x64.pubxml、win-arm64.pubxml）。
+         arm64 能放开是因为 Reactor.Uwp 从 alpha.4 起包里带了
+         runtimes\win-arm64\native\Reactor.Uwp.Native.dll；
+         用 alpha.3 或更早的包在 arm64 下会缺这个 dll。 -->
+    <Platforms>x64;arm64</Platforms>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <DefaultLanguage>zh-CN</DefaultLanguage>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
 
     <!-- AOT 默认开着：UWP + net10 的 AOT 用的是平台自带编译链，不额外依赖什么，
          而且它能第一时间暴露"反射 / 运行时代码生成"这类在 AOT 下会炸的写法。
@@ -26,10 +32,33 @@
     <PublishProfile>win-$(Platform).pubxml</PublishProfile>
     <DisableRuntimeMarshalling>true</DisableRuntimeMarshalling>
     <EnableMsixTooling>true</EnableMsixTooling>
+
+    <!-- 打包属性：与 github.com/Furry-Xiyi/UWP-Blank-Template 对齐。
+         这里最关键的是 GenerateTemporaryStoreCertificate——它让 VS 按 manifest 里的
+         Publisher 主题（CN=yunmoxing）自动生成并信任一张测试证书。
+         没有它，本机没匹配证书时部署会卡在签名、悄悄退化成"直接跑 bin 里的裸 exe"，
+         而裸 exe 没有包身份，Windows.UI.Xaml.dll 立刻 fail-fast（0xc0000409）。
+         正式发布时换成自己的证书：在项目属性 → Package 里指定 .pfx。 -->
+    <AppxPackageSigningEnabled>True</AppxPackageSigningEnabled>
+    <GenerateTemporaryStoreCertificate>True</GenerateTemporaryStoreCertificate>
+    <AppxPackageSigningTimestampDigestAlgorithm>SHA256</AppxPackageSigningTimestampDigestAlgorithm>
+
+    <!-- 打包成单架构、不要 bundle / 符号包 / 测试产物：模板走最小可用路径。
+         AppxBundlePlatforms 与上面 Platforms 保持一致。 -->
+    <AppxBundle>Never</AppxBundle>
+    <AppxBundlePlatforms>x64|arm64</AppxBundlePlatforms>
+    <AppxSymbolPackageEnabled>False</AppxSymbolPackageEnabled>
+    <AppxAutoIncrementPackageRevision>False</AppxAutoIncrementPackageRevision>
+    <GenerateTestArtifacts>False</GenerateTestArtifacts>
+    <GenerateAppInstallerFile>False</GenerateAppInstallerFile>
+    <HoursBetweenUpdateChecks>0</HoursBetweenUpdateChecks>
   </PropertyGroup>
 
   <ItemGroup>
     <!-- 新项目的起点：装包，然后把 App.cs / MainPage.cs 改成自己的。 -->
-    <PackageReference Include="Reactor.Uwp" Version="0.1.0-alpha.3" />
+    <PackageReference Include="Reactor.Uwp" Version="0.1.0-alpha.4" />
+    <!-- 与 UWP-Blank-Template 一样把 WinUI 2 显式写出来：版本由项目自己钉，
+         不依赖 Reactor.Uwp 传过来的那个。升级时改这里。 -->
+    <PackageReference Include="Microsoft.UI.Xaml" Version="2.8.7" />
   </ItemGroup>
 </Project>

@@ -4,7 +4,8 @@
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
-  IgnorableNamespaces="uap mp">
+  xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+  IgnorableNamespaces="uap uap5 mp">
 
   <!-- 新项目必改两处：Name 换成自己的 GUID，Publisher 换成自己的证书主题
        （VS 首次部署会生成测试证书，主题要与这里一致）。 -->
@@ -15,19 +16,24 @@
 
   <mp:PhoneIdentity PhoneProductId="21CE1A0C-1D93-4A28-AE85-B632189C9236" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
+  <!-- 显示名走资源：改 Strings\<locale>\Resources.resw 里的 AppDisplayName，
+       不用动 manifest。 -->
   <Properties>
-    <DisplayName>Reactor Template</DisplayName>
+    <DisplayName>ms-resource:AppDisplayName</DisplayName>
     <PublisherDisplayName>yunmoxing</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
 
   <Dependencies>
     <!-- 与 csproj 的 TargetPlatformMinVersion / TargetPlatformVersion 对齐。 -->
-    <TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+    <TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
   </Dependencies>
 
+  <!-- 用 x-generate 的话，打包时只按 DefaultLanguage 收一份；这里显式列出，
+       Strings 下每种语言的 resw 都会进包。 -->
   <Resources>
-    <Resource Language="x-generate"/>
+    <Resource Language="en-US" />
+    <Resource Language="zh-CN" />
   </Resources>
 
   <Applications>
@@ -35,14 +41,28 @@
       Executable="$targetnametoken$.exe"
       EntryPoint="Reactor.Template.App">
       <uap:VisualElements
-        DisplayName="Reactor Template"
+        DisplayName="ms-resource:AppDisplayName"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png"
-        Description="Reactor.Uwp 项目模板"
+        Description="ms-resource:AppDescription"
         BackgroundColor="transparent">
-        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png"/>
-        <uap:SplashScreen Image="Assets\SplashScreen.png" />
+        <!-- 与 UWP-Blank-Template 一致：三块磁贴尺寸都给全（中 / 宽 / 大）。
+             参考的 SmallTile / LargeTile，Assets 里是 SmallTile.scale-*.png 和
+             LargeTile.scale-*.png，引用时不带限定符，由 resources.pri 按 DPI 挑。 -->
+        <uap:DefaultTile
+          Wide310x150Logo="Assets\Wide310x150Logo.png"
+          Square71x71Logo="Assets\SmallTile.png"
+          Square310x310Logo="Assets\LargeTile.png"/>
+        <!-- uap5:Optional="true"：Assets 里只有 SplashScreen.scale-*.png，没有不带
+             限定符的那一份。正常部署靠 resources.pri 解析限定符，而松散注册（没有 pri）
+             时会报 0x80070002 找不到初始屏幕图像。标成 Optional 就不再是硬要求。 -->
+        <uap:SplashScreen Image="Assets\SplashScreen.png" uap5:Optional="true" />
       </uap:VisualElements>
     </Application>
   </Applications>
+
+  <Capabilities>
+    <!-- 模板默认给网络权限；用不到就删掉这一行。 -->
+    <Capability Name="internetClient" />
+  </Capabilities>
 </Package>
