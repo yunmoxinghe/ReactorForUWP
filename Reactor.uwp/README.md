@@ -87,3 +87,25 @@ manifest 里把入口指向这个类：
 Frame 导航与过渡、设置页（SettingsCard / SettingsExpander）、
 ItemsRepeater 虚拟化（含回收不变量校验）。
 未做：NuGet 上的正式版、xml 文档、多架构原生产物。
+
+## 发布（Trusted Publishing）
+
+包通过 GitHub Actions 发布，走 nuget.org 的 Trusted Publishing（OIDC），
+仓库里不存 API key。工作流见 `.github/workflows/publish.yml`，
+手动触发或推 `v*` tag 均可。
+
+nuget.org 侧的策略（`Account → Trusted Publishing`）需要四个值：
+
+| 字段 | 值 |
+|---|---|
+| Repository Owner | `yunmoxinghe` |
+| Repository | `ReactorForUWP` |
+| Workflow File | `publish.yml`（只填文件名，不带路径） |
+| Environment | 留空 |
+
+仓库侧只留一个 secret：`NUGET_USER` = nuget.org 的 profile name（不是邮箱）。
+
+两点提醒：策略是**按包所有者**生效的，不限于单个包 id，
+所以 scope 建议用 glob 限定到 `Reactor.Uwp`；
+私有仓库的策略初次只有 7 天临时激活期，
+首次成功登录（不必真的推包）后才会永久绑定 GitHub 的 repo/owner ID。

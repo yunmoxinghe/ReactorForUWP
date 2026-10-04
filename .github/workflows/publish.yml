@@ -1,0 +1,78 @@
+# 发 NuGet 包：走 Trusted Publishing（OIDC），仓库里不存任何 API key。
+#
+# nuget.org 侧配一次策略即可（Account → Trusted Publishing）：
+#   Repository Owner : yunmoxinghe
+#   Repository       : ReactorForUWP
+#   Workflow File    : publish.yml        ← 只填文件名，不要带 .github/workflows/
+#   Environment      : 留空（本工作流没用 environment）
+#
+# 仓库侧只需一个 secret：NUGET_USER = nuget.org 的 profile name（不是邮箱）。
+#
+# 触发方式：
+#   - 手动：Actions → publish → Run workflow（可勾 dry-run 只打包不推送）
+#   - 打 tag：git tag v0.1.0-alpha.1 && git push origin v0.1.0-alpha.1
+
+name: publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 只打包，不推送到 nuget.org
+        type: boolean
+        default: false
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: windows-latest
+
+    permissions:
+      contents: read
+      # 缺这条 NuGet/login 会直接 403：它是向 GitHub 要 OIDC 令牌的开关。
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Pack
+        run: dotnet pack Reactor.uwp/Reactor.uwp.csproj -c Release -p:Platform=x64 -o artifacts
+
+      - name: 列出产物
+        run: Get-ChildItem artifacts | Format-Table Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nupkg
+          path: artifacts/*
+
+      # 临时 key 只有 ~1 小时，所以登录要紧贴 push，不能放在打包前面。
+      - name: NuGet login（OIDC → 临时 API key）
+        if: ${{ !inputs.dry-run }}
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      # 不能用 artifacts/*.nupkg 一把梭：PowerShell 的通配符里 *.nupkg
+      # 也会吃进 .snupkg，写两个 glob 就变成同一个符号包推两次，
+      # 第二次必然 409。这里按扩展名精确分拣。
+      - name: Push
+        if: ${{ !inputs.dry-run }}
+        shell: pwsh
+        run: |
+          $nupkg = @(Get-ChildItem artifacts\*.nupkg | Where-Object { $_.Extension -eq '.nupkg' })
+          $symbols = @(Get-ChildItem artifacts\*.snupkg -ErrorAction SilentlyContinue)
+          $files = $nupkg + $symbols
+          if ($files.Count -eq 0) { throw "artifacts 里没有包" }
+          dotnet nuget push $files `
+            --source https://api.nuget.org/v3/index.json `
+            --api-key ${{ steps.login.outputs.NUGET_API_KEY }} `
+            --skip-duplicate
