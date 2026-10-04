@@ -49,4 +49,17 @@
           SkipUnchangedFiles="true" />
   </Target>
 
+  <!-- 摘掉 Microsoft.Web.WebView2.Wpf.dll。
+       它由 Microsoft.UI.Xaml 的 buildTransitive **直接加成 Reference**（不走包资产
+       图，所以 ExcludeAssets 对它无效）——UWP 侧根本不会加载 WPF 程序集，它只会与
+       .NET 的 WindowsBase 撞版本，给<b>每个</b>消费方项目刷一条 warning MSB3277。
+       因为是 targets 里加的，只能在 Reference 收集完之后摘；必须挂在
+       ResolveAssemblyReferences **之前**，MSB3277 是那个任务自己打出来的。
+       匹配用 %(Filename) 而不是程序集名：那个 Reference 的 Include 是完整路径。 -->
+  <Target Name="ReactorRemoveWebView2Wpf" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
+
 </Project>

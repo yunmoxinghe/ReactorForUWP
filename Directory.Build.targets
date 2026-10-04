@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Directory.Build.targets —— 仓库内<b>所有</b>项目都会自动导入的收尾配置。
+
+  目前只干一件事：摘掉 Microsoft.Web.WebView2.Wpf.dll。
+
+  为什么需要它：Microsoft.UI.Xaml 的 buildTransitive 会把那个 WPF 程序集
+  **直接加成 Reference**（不走包资产图，所以 ExcludeAssets 对它无效），
+  而 UWP 侧永远不会加载 WPF 程序集——它唯一的贡献就是跟 .NET 的 WindowsBase
+  撞版本，给每个项目刷一条 warning MSB3277。
+
+  为什么不放进各个 csproj：Reactor.uwp 只能管自己，而 UwpApp 走的是
+  ProjectReference（不会导入 NuGet 包里的 build\Reactor.uwp.targets），
+  示例走的是包引用（会导入）。两条路都要干净，所以放在这一层最省事：
+  仓库内靠这里，仓库外的包消费方靠包里那份（两处逻辑完全相同）。
+-->
+<Project>
+
+  <!-- BeforeTargets 而不是 AfterTargets：MSB3277 是 ResolveAssemblyReferences
+       任务自己打出来的，等它跑完再摘就晚了。
+       匹配用 %(Filename) 而不是程序集名：那个 Reference 的 Include 是**完整路径**
+       （lib_manual\...\Microsoft.Web.WebView2.Wpf.dll），按程序集名 Remove 匹配不上。 -->
+  <Target Name="ReactorRemoveWebView2Wpf" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
+
+</Project>

@@ -86,20 +86,8 @@
          dll 根本用不到，却会与 .NET 的 WindowsBase 撞版本（warning MSB3277）。 -->
   </ItemGroup>
 
-  <!-- 上面那个 Wpf.dll 是上游 Microsoft.UI.Xaml 的 buildTransitive 直接加成 Reference 的，
-       不是走包资产图进来的 —— 所以 ExcludeAssets 对它无效（试过 "all" 和
-       "buildTransitive"，warning 都还在）。只能在 Reference 收集完之后摘掉：
-       UWP 永远不会加载 WPF 程序集，留着只贡献一条 MSB3277。 -->
-  <!-- BeforeTargets 而不是 AfterTargets：MSB3277 是 ResolveAssemblyReference 任务
-       自己打出来的，等它跑完再摘就晚了。静态 ItemGroup 的求值都在评估阶段完成，
-       所以执行阶段开头的这个 Remove 一定排在那些包 targets 之后。 -->
-  <Target Name="ReactorRemoveWebView2Wpf" BeforeTargets="ResolveAssemblyReferences">
-    <ItemGroup>
-      <!-- 按文件名而不是程序集名匹配：那个 Reference 的 Include 是**完整路径**
-           （lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll），
-           Remove="Microsoft.Web.WebView2.Wpf" 匹配不上（试过，无效）。 -->
-      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
-    </ItemGroup>
-  </Target>
+  <!-- 摘掉 WebView2 的 WPF 引用见仓库根 Directory.Build.targets：
+       框架自身、走 ProjectReference 的 UwpApp、走 NuGet 包的示例，三条路都要干净，
+       放一处就够（包消费方那份在 build\Reactor.uwp.targets）。 -->
 
 </Project>
