@@ -191,9 +191,20 @@ internal sealed class Reconciler
         ApplyModifiers(native, next.Modifiers);
     }
 
-    /// <summary>两个描述是否可以复用同一个真实控件（目前按记录类型判断）。</summary>
+    /// <summary>两个描述是否可以复用同一个真实控件（先按记录类型，再看组件类型）。</summary>
+    /// <remarks>
+    /// 光看记录类型对组件元素是不够的：两个无 props 的 <see cref="ComponentElement"/>
+    /// 记录类型完全相同，但 <c>ComponentType</c> 可以完全不同（切页就是这种场景）。
+    /// 这里必须判成"不能复用"，让 Frame 走导航重建；否则会拿 A 页面的节点去
+    /// patch 成 B 页面（曾因此在 TransferNode 里抛 E_INVALIDARG 导致后半截菜单全打不开）。
+    /// </remarks>
     internal static bool CanPatch(Element? old, Element? next) =>
-        old is not null && next is not null && old.GetType() == next.GetType();
+        old is not null
+        && next is not null
+        && old.GetType() == next.GetType()
+        && (old is not ComponentElement oldComp
+            || next is not ComponentElement nextComp
+            || oldComp.ComponentType == nextComp.ComponentType);
 
     // ── 供 handler 递归使用的内部入口 ────────────────────────────
 
@@ -562,9 +573,17 @@ internal sealed class Reconciler
     }
 
     /// <summary>把重建出来的组件节点挂回原 wrapper（保持视觉树位置不变）。</summary>
+    /// <remarks>
+    /// <b>必须先摘后挂</b>：XAML 不允许一个控件同时挂在两个父节点下，
+    /// 直接写 <c>wrapper.Child = newWrapper.Child</c> 会抛 0x80070057
+    /// （E_INVALIDARG，"Value does not fall within the expected range"）。
+    /// </remarks>
     private void TransferNode(Border newWrapper, Border wrapper)
     {
-        wrapper.Child = newWrapper.Child;
+        var child = newWrapper.Child;
+        newWrapper.Child = null;
+        wrapper.Child = child;
+
         if (_componentNodes.TryGetValue(newWrapper, out var newNode))
         {
             _componentNodes.Remove(newWrapper);
