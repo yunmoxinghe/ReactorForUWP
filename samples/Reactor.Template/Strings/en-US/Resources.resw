@@ -22,4 +22,17 @@
   <data name="AppDescription" xml:space="preserve">
     <value>A Reactor.Uwp starting point</value>
   </data>
+  <!-- Keys for x:Uid. Mirrors Strings\zh-CN\Resources.resw one-to-one. -->
+  <data name="HomeWelcome.Text" xml:space="preserve">
+    <value>Welcome to the home page, a UWP template app</value>
+  </data>
+  <data name="SectionAppearance.Text" xml:space="preserve">
+    <value>Appearance</value>
+  </data>
+  <data name="SectionSound.Text" xml:space="preserve">
+    <value>Sound</value>
+  </data>
+  <data name="SectionAbout.Text" xml:space="preserve">
+    <value>About</value>
+  </data>
 </root>

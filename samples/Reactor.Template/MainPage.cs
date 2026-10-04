@@ -235,7 +235,10 @@ public sealed class MainPage : Component
     private static Element HomeBody() =>
         Group(
             VStack(12,
+                // .Uid 对应 XAML 的 x:Uid：挂载时按 Uid.Property 查
+                // Strings/<语言>/Resources.resw 并覆盖这里的文本（见 README）。
                 TextBlock("欢迎来到主页，这是一个 UWP 模板应用")
+                    .Uid("HomeWelcome")
                     .FontSize(24)
                     .HAlign(HorizontalAlignment.Center),
                 Button("查看Github仓库", () => OpenLink(RepoUrl))
@@ -277,7 +280,7 @@ public sealed class MainPage : Component
                 // 组间距来自标题的 Margin(0,32,0,8)（首组为 0,0,0,8），不是嵌套 StackPanel。
                 VStack(4,
                     // ── 外观 ──────────────────────────────────
-                    SectionHeader("外观", isFirst: true),
+                    SectionHeader("外观", uid: "SectionAppearance", isFirst: true),
 
                     SettingsExpander(
                         header: "应用主题",
@@ -330,7 +333,7 @@ public sealed class MainPage : Component
                         .Padding(16, 16),
 
                     // ── 声音 ──────────────────────────────────
-                    SectionHeader("声音"),
+                    SectionHeader("声音", uid: "SectionSound"),
 
                     SettingsCard(
                         header: "控件声音",
@@ -343,7 +346,7 @@ public sealed class MainPage : Component
                         .Padding(16, 16),
 
                     // ── 关于 ──────────────────────────────────
-                    SectionHeader("关于"),
+                    SectionHeader("关于", uid: "SectionAbout"),
 
                     SettingsExpander(
                         header: AppName,
@@ -398,8 +401,9 @@ public sealed class MainPage : Component
     /// 边距放在<b>命名样式</b>里，本地不要再写一次 <c>.Margin(...)</c>：
     /// 依赖属性优先级中本地值高于样式值，两者同时写同一个属性时样式里的边距会被完全覆盖。
     /// </remarks>
-    private static Element SectionHeader(string text, bool isFirst = false) =>
+    private static Element SectionHeader(string text, string? uid = null, bool isFirst = false) =>
         TextBlock(text)
+            .Uid(uid ?? string.Empty)
             .ApplyStyle("SettingsSectionHeaderTextBlockStyle")
             // 模板给第一个标题单独写了 Margin="0,0,0,8"（去掉顶部 32）；
             // 其余标题用样式里的 0,32,0,8。
