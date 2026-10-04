@@ -18,6 +18,35 @@
 两个项目都开着 `PublishAot`（UWP + net10 的 AOT 用平台自带编译链，不额外依赖什么），
 只列 **x64**——包的原生桥目前只有 win-x64 预编译产物。
 
+## 本机吃到的是哪个包
+
+**示例必须吃 nuget.org 上的包**，否则"能编译"证明不了任何事。但全局包缓存
+（`%USERPROFILE%\.nuget\packages\`）里同名版本一旦被本地包占住，restore 就直接命中它，
+再也不会去线下载——本机于是悄悄用上了本地产物，而别人 clone 下来还原不了。
+
+看一眼就知道现在吃的是哪份：
+
+```powershell
+Get-Content "$env:USERPROFILE\.nuget\packages\reactor.uwp\<版本>\.nupkg.metadata"
+```
+
+`source` 是 `https://api.nuget.org/v3/index.json` 才对；如果是某个本地目录，说明被污染了。
+切回在线包：
+
+```powershell
+Remove-Item "$env:USERPROFILE\.nuget\packages\reactor.uwp\<版本>" -Recurse -Force
+dotnet restore samples/Reactor.Template/Reactor.Template.csproj
+```
+
+**验证还没发布的版本时，别让它进全局缓存**——加 `--packages` 指到独立目录：
+
+```bash
+dotnet restore samples/Reactor.Template/Reactor.Template.csproj --packages .workbuddy/tmp-pkgs
+```
+
+（本地 `dotnet pack` 出来的包想拿给示例试，就临时把 `bin\x64\Release` 当源加上；
+用完记得把版本目录从全局缓存里删掉。）
+
 ## 怎么跑
 
 UWP 不能 `dotnet run`，要部署：
