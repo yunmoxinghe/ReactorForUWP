@@ -1169,6 +1169,19 @@ internal sealed class Reconciler
         {
             ApplyPadding(native, padding);
         }
+
+        // 键盘可达性 / 无障碍 / 投影 / 控件级声音（TabIndex、KeyboardAccelerators、
+        // KeyDown、ContextFlyout、AccessKey、AutomationProperties.*、Shadow、
+        // 附加属性 ElementSoundMode）。单独一个类：它有需要 diff 的事件与集合状态。
+        InputApplier.Apply(native, modifiers);
+
+        // 本地化放最后：XAML 编译器生成的 x:Uid 赋值也在初始化末尾，
+        // 所以 resw 里的值会覆盖代码里写的同属性值——顺序得跟它一致。
+        // 只在挂载时跑一次（资源不会在两次渲染之间变）。
+        if (modifiers.Uid is { Length: > 0 } uid && PropWriter.IsMounting)
+        {
+            Localization.ApplyUid(native, uid);
+        }
     }
 
     /// <summary>

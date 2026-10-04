@@ -1,8 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using Windows.System;
 using Windows.UI;
 using Windows.UI.Xaml;
+using Windows.UI.Xaml.Automation.Peers;
+using Windows.UI.Xaml.Controls.Primitives;
+using Windows.UI.Xaml.Input;
 using Windows.UI.Xaml.Media;
 
 namespace Microsoft.UI.Reactor.Core;
@@ -60,6 +64,130 @@ public record ElementModifiers
     public string? AutomationId { get; init; }
     public string? ToolTip { get; init; }
     public BackdropKind? Backdrop { get; init; }
+
+    /// <summary>
+    /// 本地化标识，对应 XAML 的 <c>x:Uid</c>：挂载时按 <c>Uid.Property</c>
+    /// 查资源文件（<c>Strings/&lt;语言&gt;/Resources.resw</c>）并套到控件上。
+    /// </summary>
+    /// <remarks>
+    /// <c>x:Uid</c> 是<b>编译期</b>指令（XAML 编译器生成
+    /// <c>ResourceLoader.GetString("Uid/Text")</c> 的赋值代码），运行时没有
+    /// <c>Uid</c> 属性可查，所以纯代码建控件必须自己补这一步——见
+    /// <c>Internal/Localization.cs</c> 的说明。
+    /// </remarks>
+    public string? Uid { get; init; }
+
+    /// <summary>
+    /// 投影（XAML 的 <c>UIElement.Shadow</c>）。传 <c>ThemeShadow</c> 拿到
+    /// WinUI 2 的主题投影；注意投影要<b>有人接收</b>（把内容放进
+    /// <c>ThemeShadow.Receivers</c> 或让元素抬到 Z 轴上），否则看不出效果。
+    /// </summary>
+    public Shadow? Shadow { get; init; }
+
+    /// <summary>
+    /// 该控件的控件级声音策略（XAML 的附加属性 <c>ElementSoundMode</c>）。
+    /// 全局开关是 <see cref="Windows.UI.Xaml.ElementSoundPlayer.State"/>，
+    /// 这里是<b>单个控件</b>的覆盖：例如某个按钮设
+    /// <see cref="Windows.UI.Xaml.ElementSoundMode.Off"/> 就只有它不响。
+    /// </summary>
+    public ElementSoundMode? ElementSoundMode { get; init; }
+
+    // ── 键盘可达性 ──────────────────────────────────────────────
+    //
+    // 这一段以前是空的：TabIndex / KeyboardAccelerator / KeyDown / ContextFlyout /
+    // AccessKey 一个都没暴露，于是"声明式做出来的 UI 键盘走不通、读屏读不出"——
+    // 控件是真的（Windows.UI.Xaml.*），但 XAML 里最基础的那批可达性属性在这套
+    // API 上没有对应物。补齐原则是<b>照搬 XAML 的同名属性</b>，不做"等价替代"。
+
+    /// <summary>Tab 顺序（XAML 的 <c>TabIndex</c>）。只在 <c>Control</c> 上有。</summary>
+    public int? TabIndex { get; init; }
+
+    /// <summary>是否参与 Tab 导航（XAML 的 <c>IsTabStop</c>）。只在 <c>Control</c> 上有。</summary>
+    public bool? IsTabStop { get; init; }
+
+    /// <summary>
+    /// 指针交互时是否自动取焦点（XAML 的 <c>AllowFocusOnInteraction</c>）。
+    /// 文本框一类控件默认 true，按钮一类默认 false。只在 <c>Control</c> 上有。
+    /// </summary>
+    public bool? AllowFocusOnInteraction { get; init; }
+
+    /// <summary>
+    /// 控件挂载并完成首次 <c>Loaded</c> 之后请求一次焦点。
+    /// </summary>
+    /// <remarks>
+    /// <b>为什么不是挂载时立刻 Focus。</b><c>Focus</c> 要求控件已在可视树里并已
+    /// 完成布局；在 mount 阶段调必然返回 false（控件还没挂上去）。所以这里挂在
+    /// <c>Loaded</c> 上、只触发一次。等价于 XAML 里在 <c>Loaded</c> 处理器里写
+    /// <c>control.Focus(FocusState.Programmatic)</c>。
+    /// </remarks>
+    public bool? FocusOnMount { get; init; }
+
+    /// <summary>
+    /// 访问键（XAML 的 <c>AccessKey</c>，Alt+字符 触发）。<c>UIElement</c> 上就有。
+    /// </summary>
+    public string? AccessKey { get; init; }
+
+    /// <summary>
+    /// 右键/长按弹出的浮出层（XAML 的 <c>ContextFlyout</c>，通常是 <c>MenuFlyout</c>）。
+    /// </summary>
+    public FlyoutBase? ContextFlyout { get; init; }
+
+    /// <summary>
+    /// 键盘快捷键（XAML 的 <c>&lt;UIElement.KeyboardAccelerators&gt;
+    /// &lt;KeyboardAccelerator Key=… Modifiers=…/&gt;</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 声明式描述，由框架建成真的 <see cref="KeyboardAccelerator"/> 并加进控件的
+    /// <c>KeyboardAccelerators</c> 集合（不是"自己监听按键然后手动派发"——那属于
+    /// 替代实现）。集合按 <c>Key + Modifiers + IsEnabled</c> 做结构比对：
+    /// 声明没变就不动它，回调变了只换委托、不重建集合。
+    /// </remarks>
+    public IReadOnlyList<KeyboardAcceleratorSpec>? KeyboardAccelerators { get; init; }
+
+    /// <summary>按键按下（XAML 的 <c>KeyDown</c> 事件）。</summary>
+    public Action<KeyRoutedEventArgs>? OnKeyDown { get; init; }
+
+    /// <summary>按键抬起（XAML 的 <c>KeyUp</c> 事件）。</summary>
+    public Action<KeyRoutedEventArgs>? OnKeyUp { get; init; }
+
+    // ── 无障碍 AutomationProperties ─────────────────────────────
+
+    /// <summary>读屏补充描述（<c>AutomationProperties.HelpText</c>）。</summary>
+    public string? AutomationHelpText { get; init; }
+
+    /// <summary>完整描述（<c>AutomationProperties.FullDescription</c>）。</summary>
+    public string? AutomationFullDescription { get; init; }
+
+    /// <summary>项状态（<c>AutomationProperties.ItemStatus</c>，如"已下载"）。</summary>
+    public string? AutomationItemStatus { get; init; }
+
+    /// <summary>项类型（<c>AutomationProperties.ItemType</c>，如"邮件"）。</summary>
+    public string? AutomationItemType { get; init; }
+
+    /// <summary>层级（<c>AutomationProperties.Level</c>，1 起）。</summary>
+    public int? AutomationLevel { get; init; }
+
+    /// <summary>集合内位置（<c>AutomationProperties.PositionInSet</c>，1 起）。</summary>
+    public int? AutomationPositionInSet { get; init; }
+
+    /// <summary>集合总数（<c>AutomationProperties.SizeOfSet</c>）。</summary>
+    public int? AutomationSizeOfSet { get; init; }
+
+    /// <summary>实时区域策略（<c>AutomationProperties.LiveSetting</c>）。</summary>
+    public AutomationLiveSetting? AutomationLiveSetting { get; init; }
+
+    /// <summary>
+    /// 是否对读屏隐藏（<c>AutomationProperties.AccessibilityView</c>）。
+    /// 纯装饰性元素应设 <see cref="Peers.AccessibilityView.Raw"/>。
+    /// </summary>
+    public AccessibilityView? AutomationAccessibilityView { get; init; }
+
+    /// <summary>
+    /// 等价 XAML 的 <c>AutomationProperties.AcceleratorKey</c>：只用于<b>告知</b>
+    /// 读屏这个控件有哪个快捷键，<b>不会</b>真的注册快捷键（注册用
+    /// <see cref="KeyboardAccelerators"/>）。
+    /// </summary>
+    public string? AutomationAcceleratorKey { get; init; }
 
     /// <summary>
     /// 命名样式键。解析顺序：自定义样式表（<see cref="Microsoft.UI.Reactor.StyleSheet"/>）
@@ -137,6 +265,28 @@ public record ElementModifiers
         AutomationId = other.AutomationId ?? AutomationId,
         ToolTip = other.ToolTip ?? ToolTip,
         Backdrop = other.Backdrop ?? Backdrop,
+        Uid = other.Uid ?? Uid,
+        Shadow = other.Shadow ?? Shadow,
+        ElementSoundMode = other.ElementSoundMode ?? ElementSoundMode,
+        TabIndex = other.TabIndex ?? TabIndex,
+        IsTabStop = other.IsTabStop ?? IsTabStop,
+        AllowFocusOnInteraction = other.AllowFocusOnInteraction ?? AllowFocusOnInteraction,
+        FocusOnMount = other.FocusOnMount ?? FocusOnMount,
+        AccessKey = other.AccessKey ?? AccessKey,
+        ContextFlyout = other.ContextFlyout ?? ContextFlyout,
+        KeyboardAccelerators = other.KeyboardAccelerators ?? KeyboardAccelerators,
+        OnKeyDown = other.OnKeyDown ?? OnKeyDown,
+        OnKeyUp = other.OnKeyUp ?? OnKeyUp,
+        AutomationHelpText = other.AutomationHelpText ?? AutomationHelpText,
+        AutomationFullDescription = other.AutomationFullDescription ?? AutomationFullDescription,
+        AutomationItemStatus = other.AutomationItemStatus ?? AutomationItemStatus,
+        AutomationItemType = other.AutomationItemType ?? AutomationItemType,
+        AutomationLevel = other.AutomationLevel ?? AutomationLevel,
+        AutomationPositionInSet = other.AutomationPositionInSet ?? AutomationPositionInSet,
+        AutomationSizeOfSet = other.AutomationSizeOfSet ?? AutomationSizeOfSet,
+        AutomationLiveSetting = other.AutomationLiveSetting ?? AutomationLiveSetting,
+        AutomationAccessibilityView = other.AutomationAccessibilityView ?? AutomationAccessibilityView,
+        AutomationAcceleratorKey = other.AutomationAcceleratorKey ?? AutomationAcceleratorKey,
         StyleKey = other.StyleKey ?? StyleKey,
         TextWrapping = other.TextWrapping ?? TextWrapping,
         FontWeight = other.FontWeight ?? FontWeight,
