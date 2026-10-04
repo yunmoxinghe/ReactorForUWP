@@ -151,13 +151,22 @@ public record ElementModifiers
 }
 
 /// <summary>组件元素：描述一个子组件的类型与 props，实例由 Reconciler 创建并维护。</summary>
+/// <remarks>
+/// 参数与属性都要标注：<c>Reconciler</c> 用 <c>Activator.CreateInstance</c> 造组件实例，
+/// AOT/裁剪下只标属性不够——值是从参数流进字段的，ILC 会在赋值那一步报
+/// IL2069（"value stored in field ... does not satisfy ... requirements"），
+/// 并且类型可能在裁剪时被丢掉无参构造函数。
+/// </remarks>
 public record ComponentElement(
+    [param: DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
     [property: DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
     Type ComponentType,
     object? Props = null) : Element;
 
 /// <summary>强类型组件元素：允许通过 record with 语法修改 props。</summary>
 public sealed record ComponentElement<TProps>(
+    [param: DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
+    [property: DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
     Type ComponentType,
     TProps Props) : ComponentElement(ComponentType, Props)
 {
