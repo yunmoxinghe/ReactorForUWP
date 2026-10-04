@@ -546,19 +546,10 @@ internal sealed class ImageHandler : ElementHandler<ImageElement, Image>
             return null;
         }
 
-        try
-        {
-            var uri = source.Contains("://", StringComparison.Ordinal)
-                ? new Uri(source)
-                : new Uri("ms-appx:///" + source.TrimStart('/'));
-
-            return new BitmapImage(uri);
-        }
-        catch (Exception)
-        {
-            // 对齐官方：非法 URI 静默忽略（Source 保持为空）。
-            return null;
-        }
+        // 走 PackUri：补 ms-appx: 绝对前缀，并把清单里的反斜杠路径规范化。
+        // 直接 new Uri("ms-appx:///Assets\StoreLogo.png") 的话反斜杠会带进
+        // Windows.Foundation.Uri，资源解析失败且<b>不报错</b>——图就是不出来。
+        return PackUri.TryCreate(source) is { } uri ? new BitmapImage(uri) : null;
     }
 }
 

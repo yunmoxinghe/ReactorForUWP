@@ -185,17 +185,13 @@ internal sealed class BitmapIconHandler : ElementHandler<BitmapIconElement, Bitm
             return;
         }
 
-        try
+        // 与 Image 同一条路：ms-appx: 绝对前缀 + 反斜杠规范化。
+        // 参考实现写的是 ImgAppIcon.UriSource = Package.Current.Logo（直接给 Uri 对象），
+        // 而 Package.Logo 来自清单的 <Logo>Assets\StoreLogo.png</Logo>，是 Windows 路径；
+        // 纯代码建控件必须自己把它变成合法 URI，否则图标静默加载失败、尺寸塌成 0。
+        if (PackUri.TryCreate(element.UriSource) is { } uri)
         {
-            var uri = element.UriSource.Contains("://", StringComparison.Ordinal)
-                ? new Uri(element.UriSource)
-                : new Uri("ms-appx:///" + element.UriSource.TrimStart('/'));
-
             icon.UriSource = uri;
-        }
-        catch (Exception)
-        {
-            // 与 Image 一致：非法 URI 静默忽略。
         }
     }
 }

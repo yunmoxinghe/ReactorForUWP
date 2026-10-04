@@ -32,7 +32,19 @@ public static partial class Factories
     public static FontIconElement FontIcon(string glyph, string? fontFamily = null, double? fontSize = null) =>
         new(glyph) { FontFamily = fontFamily, FontSize = fontSize };
 
-    /// <summary>位图图标（ms-appx 相对路径或绝对 URI）。</summary>
+    /// <summary>位图图标（ms-appx 相对路径、包内绝对 URI，或拿 <c>Package.Current.Logo</c> 的结果）。</summary>
+    /// <remarks>
+    /// <b>不要给它设 <c>Width</c> / <c>Height</c>。</b>
+    /// <c>BitmapIcon</c> 不像 <c>Image</c> 那样把位图<b>缩放</b>适配到给定尺寸 ——
+    /// 它按原图 1:1 画，设了尺寸等于把原图<b>裁</b>出一个角。给 106px 的
+    /// <c>SmallTile.scale-150.png</c> 设 20×20，看到的就是被裁秃的一小块，
+    /// 症状很像"图标缩没了"，于是容易误判成尺寸不够去调大 —— 越调越错。
+    /// 缩放是宿主的事（<c>SettingsCard</c> 的 HeaderIcon 展示器等），这里别插手。
+    /// <para>
+    /// 真出现"图标小到看不见"，先怀疑 <c>UriSource</c> 没加载成功（见
+    /// <c>Internal/PackUri.cs</c>）：URI 非法时是<b>静默失败</b>，不抛异常。
+    /// </para>
+    /// </remarks>
     public static BitmapIconElement BitmapIcon(string uriSource, bool showAsMonochrome = true) =>
         new(uriSource) { ShowAsMonochrome = showAsMonochrome };
 
