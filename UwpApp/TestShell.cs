@@ -37,7 +37,6 @@ public sealed class TestShellApp : Component
         new TestCase("CoreLoop 演示", () => Component<CoreLoopDemo>()),
         new TestCase("Blank 模板页", () => Component<BlankTemplateApp>()),
         new TestCase("XAML/代码 控件对照", () => Component<XamlDiffProbe>()),
-        new TestCase("面包屑 ItemsSource 探针", () => Component<BreadcrumbProbe>()),
 
         // 慢滚对照：与 M1 / M0 同样的控件路径，只是每 tick 前进 2 项而不是几百项。
         // 用来判定"快速滚动闪烁"的来源——慢滚不闪 = 压测自己的大跨步所致。

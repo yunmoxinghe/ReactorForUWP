@@ -1,6 +1,6 @@
-// 临时探针：ItemsRepeater 虚拟化 A/B 压测 + 不变量校验（用完即删）
+// ItemsRepeater 虚拟化 A/B 压测 + 不变量校验（虚拟化的回归工具，不是临时代码）
 //
-// 这一版的目标不是「打印 minted/realized」，而是**证明不变量成立**。
+// 目标不是「打印 minted/realized」，而是**证明不变量成立**。
 // 每一轮都会落一份可追溯的归档：
 //
 //   ReactorRuns/<runId>/
