@@ -64,9 +64,13 @@ jobs:
         with:
           user: ${{ secrets.NUGET_USER }}
 
-      # 不能用 artifacts/*.nupkg 一把梭：PowerShell 的通配符里 *.nupkg
+      # 不能用 artifacts/*.nupkg 一把梭：这里的通配符里 *.nupkg
       # 也会吃进 .snupkg，写两个 glob 就变成同一个符号包推两次，
       # 第二次必然 409。这里按扩展名精确分拣。
+      #
+      # 另：dotnet nuget push 推 .nupkg 时会自动带上同目录的 .snupkg，
+      # 所以日志里符号包那条 Conflict 是预期的（--skip-duplicate 已放行），
+      # 不是失败。显式再推一次是为了在自动附带行为变化时也不丢符号包。
       - name: Push
         if: ${{ !inputs.dry-run }}
         shell: pwsh
