@@ -16,3 +16,28 @@ BundleArtifacts/
 *.user
 *.suo
 *.userosscache
+
+# C++/WinRT 生成的投影头文件
+Reactor.Uwp.Native/generated/
+
+# C++/WinRT 编译产物
+Reactor.Uwp.Native/*.obj
+Reactor.Uwp.Native/*.exp
+Reactor.Uwp.Native/*.lib
+Reactor.Uwp.Native/*.dll
+Reactor.Uwp.Native/*.pdb
+
+# 临时文件和诊断数据
+.workbuddy/
+dumps/
+*.dmp
+
+# Windows SDK / WinUI 元数据参考：由本地 SDK 提供，cppwinrt 需要它但不必入库
+# （96 个文件约 7.8M，且随 SDK 版本变化，提交只会导致仓库膨胀与版本错配）
+Reactor.Uwp.Native/winmd/
+
+# cppwinrt 工具包本身同样不入仓库
+*.nupkg
+
+# 预编译产物（可选：如果想在 CI 重新生成）
+# Reactor.Uwp.Native/prebuilt/
