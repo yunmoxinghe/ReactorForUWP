@@ -24,7 +24,7 @@
 
   <!-- ── NuGet 打包 ──────────────────────────────────────────────
        用 PackageVersion 而不是 Version：前者只作用于包元数据，不动程序集版本号。
-       PackageLicenseExpression 是占位（MIT），正式发布前按仓库实际授权改。 -->
+       授权：MIT，与仓库根目录的 LICENSE 一致（nuget.org 上 Reactor.Uwp 这个 id 未被占用）。 -->
   <PropertyGroup>
     <PackageId>Reactor.Uwp</PackageId>
     <PackageVersion>0.1.0-alpha.1</PackageVersion>
