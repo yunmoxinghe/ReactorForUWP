@@ -4,6 +4,8 @@ using System.Linq;
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Reactor.Uwp.Internal;
+using Windows.ApplicationModel.Resources.Core;
+using Windows.Foundation.Collections;
 using Windows.UI;
 using Windows.UI.Core;
 using Windows.UI.Xaml;
@@ -43,11 +45,27 @@ public sealed class ReactorHost
 {
     private readonly Component _root;
     private readonly Reconciler _reconciler = new();
+
+    /// <summary>合并同一轮消息泵内的多次重渲染请求（见 <see cref="RenderBatcher"/>）。</summary>
+    private readonly RenderBatcher _batcher = new();
     private Element? _tree;
-    private bool _renderQueued;
+
+    /// <summary>
+    /// 下一轮强制整树重建（不是 patch）。语言切换后置位——见 <see cref="OnQualifierChanged"/>。
+    /// </summary>
+    private bool _forceRebuild;
     private BackdropKind? _lastBackdrop;
     private ElementTheme? _lastTheme;
     private bool _refreshingBackdrop;
+
+    /// <summary>语言等资源限定符的观察源（view-independent：不与某个窗口绑定）。</summary>
+    private readonly ResourceContext _resourceContext = ResourceContext.GetForViewIndependentUse();
+
+    /// <summary>
+    /// <see cref="ResourceContext.QualifierValues"/> 的订阅委托。
+    /// 必须存成字段才能注销；WinRT 事件的 <c>token</c> 注销需要同一个委托实例。
+    /// </summary>
+    private readonly MapChangedEventHandler<string, string> _qualifierChanged;
 
     public ReactorHost(Component root)
     {
@@ -73,42 +91,81 @@ public sealed class ReactorHost
             RefreshBackdropForTheme();
         };
 
+        // 语言（及缩放/对比度等资源限定符）变化时刷新界面。
+        // 订阅必须在这里而不是 Localization 里：ResourceContext 是进程级单例，
+        // 委托由本宿主持有，生命周期跟宿主一致，不会把整个控件树挂在静态事件上。
+        _qualifierChanged = OnQualifierChanged;
+        _resourceContext.QualifierValues.MapChanged += _qualifierChanged;
+
         Rerender();
     }
 
     /// <summary>挂到窗口（或任意 XAML 容器）上的真实根控件。</summary>
     public Frame Root { get; }
 
-    /// <summary>组件状态变化时请求重渲染（可在任意线程调用）。</summary>
+    /// <summary>
+    /// 组件状态变化时请求重渲染（可在任意线程调用）。
+    /// </summary>
+    /// <remarks>
+    /// <b>多次调用会合并成一次渲染</b>（批处理）——语义与 React / 官方 Reactor 一致：
+    /// <c>setState</c> 之后<b>不会同步生效</b>，它排到当前调用栈结束之后。
+    /// 依赖"改完立刻读到新 UI"的写法要改成在渲染之后读。
+    /// <para>
+    /// 之前的实现只在<b>非</b> UI 线程分支做合并，UI 线程上连发 N 次 setState 就是
+    /// N 次"整棵树 Render + Patch"；一个事件处理里改三个状态，代价直接翻三倍。
+    /// </para>
+    /// <para>
+    /// 统一走 <c>RunAsync</c> 之后，"patch 途中被控件事件同步触发"这个重入场景也
+    /// 自动解决了：回调排在 dispatcher 队列里，本轮 <c>Rerender</c> 返回后才会跑，
+    /// 内外两层 patch 不会交错改同一棵原生树。
+    /// </para>
+    /// </remarks>
     public void RequestRerender()
     {
-        if (Root.Dispatcher.HasThreadAccess)
-        {
-            // patch 途中被控件事件同步触发：推迟到本轮结束后再跑，
-            // 否则内外两层 patch 会交错改同一棵原生树（同类崩溃的根因）。
-            // 注意必须用协调器的标志位：宿主渲染与子组件重渲染共用同一把锁，
-            // 否则宿主驱动的一轮渲染不会被识别为"渲染中"。
-            if (_reconciler.InRenderPass)
-            {
-                _ = Root.Dispatcher.RunAsync(CoreDispatcherPriority.Normal, Rerender);
-                return;
-            }
-
-            Rerender();
-            return;
-        }
-
-        // 非 UI 线程：marshal 回 UI 线程并合并同一轮消息泵内的多次请求。
-        if (_renderQueued)
+        // 已经排过一轮就把这次请求并进去（返回 false），不再单开一次渲染。
+        if (!_batcher.TrySchedule())
         {
             return;
         }
 
-        _renderQueued = true;
+        // 无论当前在不在 UI 线程都走 RunAsync：UI 线程上它只是排队，
+        // 非 UI 线程上它顺带完成 marshal。
         _ = Root.Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
         {
-            _renderQueued = false;
+            _batcher.Reset();
             Rerender();
+        });
+    }
+
+    /// <summary>
+    /// 资源限定符变化（语言、缩放、对比度…）。
+    /// </summary>
+    /// <remarks>
+    /// <b>为什么必须重建整棵树，光重渲染不行。</b><c>Localization.ApplyUid</c>
+    /// 只在<b>挂载</b>时跑一次（对齐 XAML 编译器生成的初始化代码）。
+    /// 语言切换后走的是 patch 路径，不会重跑它——界面上所有 <c>.Uid(...)</c>
+    /// 的文本会一直停在旧语言。所以这里置 <see cref="_forceRebuild"/> 强制 Build 一遍。
+    /// </remarks>
+    private void OnQualifierChanged(
+        IObservableMap<string, string> sender,
+        IMapChangedEventArgs<string> args)
+    {
+        // 缩放 / 对比度变化 XAML 自己会处理（且重建整树代价太大），这里只认语言。
+        if (!string.Equals(args.Key, "Language", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        ReactorApplication.Trace($"[reactor] 资源限定符变化: {args.Key}");
+
+        _ = Root.Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
+        {
+            // 顺序要紧：先让 Localization 丢掉缓存与旧的 ResourceLoader
+            // （loader 创建时快照了 ResourceContext，不重建就一直返回旧语言的串），
+            // 再重建整棵树，让 ApplyUid 重新跑一遍。
+            Localization.Invalidate();
+            _forceRebuild = true;
+            RequestRerender();
         });
     }
 
@@ -128,7 +185,11 @@ public sealed class ReactorHost
             // 根元素声明 OwnsTitleBar 时，宿主让出标题栏区域的布局权（见该修饰符的注释）。
             ReactorApplication.SetOwnsTitleBar(next.Modifiers?.OwnsTitleBar == true);
 
-            if (_tree is null || Root.Content is not UIElement native ||
+            // 语言切换后必须整树重建：Uid 只在挂载时解析（见 OnQualifierChanged）。
+            var rebuild = _forceRebuild;
+            _forceRebuild = false;
+
+            if (_tree is null || rebuild || Root.Content is not UIElement native ||
                 !Reconciler.CanPatch(_tree, next))
             {
                 Root.Content = _reconciler.Build(next);

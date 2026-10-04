@@ -32,30 +32,6 @@ internal sealed class Reconciler
         ElementHandlerRegistry.RegisterBuiltIns();
     }
 
-    /// <summary>
-    /// 是否正处于一轮渲染 / patch 中。
-    /// </summary>
-    /// <remarks>
-    /// <b>为什么需要它</b>：patch 过程中会给真实控件赋值（<c>TextBox.Text</c>、
-    /// <c>Button.Content</c>、移除子控件…），XAML 可能同步回调控件事件
-    /// （典型是 TextChanged）。如果回调里调用 setState 立刻重渲染，
-    /// 内外两层 patch 会交错执行：内层基于"外层还没改完"的原生树做增删，
-    /// 外层收尾时再插一次，同一个 Panel 就会多出一个原生子控件，
-    /// 之后下一次 patch 按 element 数量索引就会
-    /// <c>ArgumentOutOfRangeException</c>。
-    /// 因此渲染过程中到来的重渲染请求一律推迟到本轮结束之后。
-    /// </remarks>
-    private bool _inRenderPass;
-
-    /// <summary>
-    /// 当前是否处于一轮渲染 / patch 中（宿主与子组件共用同一把锁）。
-    /// </summary>
-    /// <remarks>
-    /// 必须由宿主在整轮渲染时也置位：否则宿主驱动渲染期间，控件事件同步回调
-    /// 触发的子组件状态更新会被判定为"非重入"而立刻执行，内外两层 patch 交错。
-    /// </remarks>
-    internal bool InRenderPass => _inRenderPass;
-
     /// <summary>遍历期生效的 Context 作用域（对齐官方 Reconciler._contextScope）。</summary>
     private readonly ContextScope _contextScope = new();
 
@@ -66,8 +42,22 @@ internal sealed class Reconciler
     private readonly Dictionary<CheckBox, RoutedEventHandler> _checkBoxUnchecked = new();
     private readonly Dictionary<Slider, RangeBaseValueChangedEventHandler> _sliderValueChanged = new();
 
-    /// <summary>构建失败、被替换成占位块的原生控件（见 <see cref="Build"/>）。</summary>
-    private readonly HashSet<UIElement> _failedBuilds = new();
+    /// <summary>
+    /// 构建失败占位块的标记（打在 <see cref="Border.Tag"/> 上）。
+    /// </summary>
+    /// <remarks>
+    /// <b>为什么用标记而不是"记一个失败控件的集合"。</b>之前这里是
+    /// <c>HashSet&lt;UIElement&gt; _failedBuilds</c>，只增不减：占位块被替换、
+    /// 从树上摘掉之后，协调器依然强引用着它 —— 一个页面反复出错就会把这些
+    /// 废弃的 <c>Border</c>（连带它的 <c>TextBlock</c>、画笔）整个生命周期钉住，
+    /// 这是实打实的泄漏。
+    /// <para>
+    /// 标记打在控件自己身上就没有这个问题：占位块一被移除、不再被树引用，
+    /// 它就随着 GC 一起走，"记不记得它失败过"这件事也随之消失——而那正是我们
+    /// 需要的语义（还在树上的占位块才需要被跳过）。
+    /// </para>
+    /// </remarks>
+    private const string BuildFailureTag = "reactor:build-failure";
 
     // ── 元素 → 控件 分发 ────────────────────────────────────────
 
@@ -101,7 +91,7 @@ internal sealed class Reconciler
                 // 这里降级成可见的占位块 + 日志，页面其余部分照常渲染。
                 Hosting.ReactorApplication.Trace(
                     $"[reactor] 元素构建失败 {element.GetType().Name}: {ex.Message}");
-                _failedBuilds.Add(native = BuildFailure(element.GetType().Name, ex.Message));
+                native = BuildFailure(element.GetType().Name, ex.Message);
             }
         }
         else
@@ -117,6 +107,8 @@ internal sealed class Reconciler
     private static UIElement BuildFailure(string elementName, string message) =>
         new Border
         {
+            // 打标记而不是记进集合：占位块卸载后不该被协调器继续持有（见字段注释）。
+            Tag = BuildFailureTag,
             Padding = new Thickness(6, 4, 6, 4),
             Background = new SolidColorBrush(Windows.UI.Colors.OrangeRed) { Opacity = 0.15 },
             Child = new TextBlock
@@ -160,7 +152,7 @@ internal sealed class Reconciler
 
     private void PatchCore(UIElement native, Element old, Element next)
     {
-        if (_failedBuilds.Contains(native))
+        if (IsBuildFailure(native))
         {
             // 上一次构建就失败过，占位块不是真实控件，没法就地 patch。
             // 保持占位（已记日志），避免二次抛异常把进程带崩。
@@ -444,30 +436,27 @@ internal sealed class Reconciler
                 return;
             }
 
-            // 一轮 patch 还没跑完时又来了状态更新：必须推迟。
-            // 若在此处同步重渲染，内外两层 patch 会交错修改同一棵原生树，
-            // 导致原生子控件数量与 element 子节点数量错位（随后索引越界崩溃）。
-            if (_inRenderPass)
+            // 与宿主同一条规则：一轮消息泵内的多次 setState 合并成一次。
+            // 之前这里没有合并，UI 线程上连发 N 次就是 N 次"整棵子树 Render + Patch"。
+            // 统一走 RunAsync 之后，"patch 途中被控件事件同步触发"这个重入场景
+            // 也一并解决了：回调排在当前这一轮之后，内外两层 patch 不会交错
+            // （否则原生子控件数量会与 element 子节点数量错位，随后索引越界崩溃）。
+            if (!node.Rerender.TrySchedule())
             {
-                _ = wrapper.Dispatcher.RunAsync(
-                    Windows.UI.Core.CoreDispatcherPriority.Normal, DoRerender);
                 return;
             }
 
-            if (wrapper.Dispatcher.HasThreadAccess)
-            {
-                DoRerender();
-            }
-            else
-            {
-                _ = wrapper.Dispatcher.RunAsync(
-                    Windows.UI.Core.CoreDispatcherPriority.Normal, DoRerender);
-            }
+            _ = wrapper.Dispatcher.RunAsync(
+                Windows.UI.Core.CoreDispatcherPriority.Normal, DoRerender);
 
             // 子组件自己的一轮重渲染。整段包在 RunPass 里，
             // 这样 patch 途中由控件事件同步触发的状态更新会被识别为"重入"并推迟。
             void DoRerender()
             {
+                // 先复位再渲染：渲染期间（同步的控件事件回调里）到来的 setState
+                // 必须能排上下一轮，而不是被本轮那个已消费的标志位挡掉。
+                node.Rerender.Reset();
+
                 if (!node.IsMounted)
                 {
                     return;
@@ -593,22 +582,22 @@ internal sealed class Reconciler
     }
 
     /// <summary>
-    /// 执行一轮渲染 / patch，并把 <see cref="_inRenderPass"/> 置位，
-    /// 使过程中同步触发的状态更新被推迟而不是重入。
+    /// 执行一轮渲染 / patch。
     /// </summary>
-    internal void RunPass(Action pass)
-    {
-        var wasInPass = _inRenderPass;
-        _inRenderPass = true;
-        try
-        {
-            pass();
-        }
-        finally
-        {
-            _inRenderPass = wasInPass;
-        }
-    }
+    /// <remarks>
+    /// <b>重入保护不在这一层了。</b>以前这里置一个 <c>_inRenderPass</c> 标志位，
+    /// 让渲染过程中（同步的控件事件回调里）到来的 setState 走"推迟"分支——
+    /// 否则内外两层 patch 会交错改同一棵原生树，同一个 Panel 多出一个原生子控件，
+    /// 下一次 patch 按 element 数量索引就 <c>ArgumentOutOfRangeException</c>。
+    /// <para>
+    /// 现在两条重渲染路径都统一走 <c>Dispatcher.RunAsync</c>
+    /// （见 <see cref="Reactor.Uwp.Hosting.ReactorHost.RequestRerender"/> 与
+    /// <c>BuildComponent</c> 里的 <c>RequestComponentRerender</c>）：
+    /// 回调天然排在当前这一轮之后，重入从结构上就不可能发生，
+    /// 标志位失去读者，遂删。批处理顺带把连发的 setState 合并成一次。
+    /// </para>
+    /// </remarks>
+    internal void RunPass(Action pass) => pass();
 
     /// <summary>重渲染组件子树（在 UI 线程上调用）。</summary>
     private void RerenderComponent(ComponentNode node, Border wrapper)
@@ -811,21 +800,33 @@ internal sealed class Reconciler
         // 就地重排：处理完位置 i 后 panel.Children[0..i] 恒等于 finalOrder[0..i]，
         // 后续步骤只在下标 >= i+1 处增删，不会破坏已固定的前缀 → 必然收敛。
         // 复用控件仅在顺序真的变化时才被 Remove/Insert（否则原地不动，保住焦点）。
-        for (var i = 0; i < finalOrder.Count; i++)
+        //
+        // 先用 O(n) 判一次"是否已经同序"：绝大多数 patch 顺序没变，
+        // 直接整段跳过。以前是每个下标都 IndexOfNative 线性扫一遍（内层 O(n)），
+        // 即使顺序一模一样也要扫 n 次 —— n 个节点就是 n² 次引用比较。
+        // 顺序真变了也从第一个不匹配处才开工（见 Reorder.FirstMismatch）。
+        var firstMismatch = Reorder.FirstMismatch(panel.Children, finalOrder);
+        if (firstMismatch >= 0)
         {
-            var target = finalOrder[i];
-            var current = IndexOfNative(panel, target);
-            if (current == i)
+            for (var i = firstMismatch; i < finalOrder.Count; i++)
             {
-                continue;
-            }
+                var target = finalOrder[i];
 
-            if (current >= 0)
-            {
-                panel.Children.RemoveAt(current);
-            }
+                // 从 i 开始找：前缀 [0..i) 已固定为 finalOrder[0..i)，
+                // 而 finalOrder 已去重，target 不可能藏在前缀里。
+                var current = IndexOfNative(panel, target, i);
+                if (current == i)
+                {
+                    continue;
+                }
 
-            panel.Children.Insert(Math.Min(i, panel.Children.Count), target);
+                if (current >= 0)
+                {
+                    panel.Children.RemoveAt(current);
+                }
+
+                panel.Children.Insert(Math.Min(i, panel.Children.Count), target);
+            }
         }
 
         // 收尾一致性校验：面板最终必须恰好是 finalOrder。
@@ -840,9 +841,17 @@ internal sealed class Reconciler
         }
     }
 
-    private static int IndexOfNative(Panel panel, UIElement target)
+    /// <summary>
+    /// 找 <paramref name="target"/> 在面板里的位置。
+    /// </summary>
+    /// <param name="startIndex">
+    /// 从哪个下标开始找。<b>不是可选的微优化</b>：重排循环依赖
+    /// "前缀已固定且 finalOrder 已去重"这个不变量，从 0 开始扫既慢又容易让
+    /// 后面的删除/插入逻辑误判。
+    /// </param>
+    private static int IndexOfNative(Panel panel, UIElement target, int startIndex = 0)
     {
-        for (var i = 0; i < panel.Children.Count; i++)
+        for (var i = startIndex; i < panel.Children.Count; i++)
         {
             if (ReferenceEquals(panel.Children[i], target))
             {
@@ -852,6 +861,10 @@ internal sealed class Reconciler
 
         return -1;
     }
+
+    /// <summary>这个原生控件是不是"上次构建失败"留下的占位块（见 <see cref="BuildFailureTag"/>）。</summary>
+    private static bool IsBuildFailure(UIElement native) =>
+        native is Border { Tag: string tag } && tag == BuildFailureTag;
 
     /// <summary>把 element 序列描述成便于比对的字符串（类型 + Key），仅用于诊断。</summary>
     private static string Describe(IReadOnlyList<Element> elements)

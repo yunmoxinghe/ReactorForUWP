@@ -11,6 +11,16 @@ internal sealed class ComponentNode
     /// <summary>组件类型（用于 key 匹配）。</summary>
     public required Type ComponentType { get; init; }
 
+    /// <summary>
+    /// 本组件自己的重渲染批处理（见 <see cref="RenderBatcher"/>）。
+    /// </summary>
+    /// <remarks>
+    /// 与宿主那一个是两把独立的锁：子组件只重渲染自己的 <c>Border.Child</c>，
+    /// 粒度比宿主整树更细，所以不该共用宿主的排队状态
+    /// （否则宿主要渲染时会把子组件这一轮并掉，子组件的更新就丢了）。
+    /// </remarks>
+    public RenderBatcher Rerender { get; } = new();
+
     /// <summary>组件 props（用于 ShouldUpdate 判断）。</summary>
     public object? Props { get; set; }
 
