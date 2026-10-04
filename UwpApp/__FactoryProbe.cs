@@ -96,8 +96,15 @@ namespace UwpApp
 
         /// <summary>本轮的 tick 定时器；切页/重跑时由 <see cref="StopRun"/> 停掉。</summary>
         private DispatcherTimer? _timer;
-        private Windows.UI.Xaml.Controls.Primitives.Popup? _popup;
         private Action<string>? _setStatus;
+
+        /// <summary>
+        /// 宿主控件的创建委托。<b>引用必须稳定</b>：每次 Render 都 new 一个 lambda
+        /// 会被 <c>NativeElement</c> 当成"要换控件"，于是每轮重渲染（刷新进度行也算）
+        /// 都会把整棵压测列表重建一遍。
+        /// </summary>
+        private Func<UIElement>? _hostFactory;
+        private Func<UIElement> HostFactory => _hostFactory ??= BuildHost;
 
         public override Element Render()
         {
@@ -106,10 +113,15 @@ namespace UwpApp
 
             UseEffect(() =>
             {
+                _setStatus = setStatus;
+
                 try
                 {
                     Say("[probe] effect enter Mode=" + Mode);
-                    StartRun(setStatus);
+
+                    // 控件已经在可视树里了（宿主是页面的一部分）就可以直接开跑；
+                    // 还没挂上就等它 Loaded，那时 StartRun 会被再调一次。
+                    StartRun();
                     Say("[probe] StartRun returned");
                 }
                 catch (Exception ex)
@@ -120,7 +132,7 @@ namespace UwpApp
                     setStatus("EX " + ex.Message);
                 }
 
-                // 切页 / 重跑：先把上一轮的 timer 与浮层收干净，否则两个实例会同时滚。
+                // 切页 / 重跑：先把上一轮的 timer 收干净，否则两个实例会同时滚。
                 return () => StopRun();
             },
                 // 依赖里带上 Props：从 M1 切到 M2 时元素类型相同、会走就地 patch，
@@ -134,7 +146,13 @@ namespace UwpApp
                 HStack(
                     Button("重跑", () => setRunId(runId + 1)),
                     Button("停止", () => StopRun())
-                )
+                ),
+                // 压测控件躺在页面里（以前是弹一个 Popup 浮层：既挡住左侧菜单，
+                // 又脱离页面布局）。Native() 是逃生舱：控件自己造，
+                // token=runId 一变就换一棵新的——"重跑"就是换一棵。
+                Native(HostFactory, token: runId, onDispose: _ => StopRun())
+                    .Width(280)
+                    .Height(500)
             );
         }
 
@@ -159,17 +177,12 @@ namespace UwpApp
             Reactor.Uwp.Hosting.ReactorApplication.Trace(msg);
         }
 
-        private void StartRun(Action<string>? setStatus = null)
+        /// <summary>
+        /// 造压测用的那棵原生控件树（ScrollViewer + ItemsRepeater），交给
+        /// <c>Native()</c> 挂在页面里。尺寸交给宿主容器，这里只管结构。
+        /// </summary>
+        private UIElement BuildHost()
         {
-            _setStatus = setStatus;
-            s_active = this;
-            Say("[probe] creating RunLog");
-            _log = new RunLog(Mode, ItemCount, ItemHeight, TickMs, MaxPool, RoundTrips, JumpCount,
-                Mode is 1 or 2 or 4);
-            Say("[probe] RunLog dir=" + _log.Directory);
-            EchoStats.Reset();
-            _watch.Restart();
-
             _items = new ObservableCollection<string>();
             for (int i = 0; i < ItemCount; i++)
             {
@@ -189,18 +202,41 @@ namespace UwpApp
 
             _scroller = new ScrollViewer
             {
-                Width = 260,
-                Height = 500,
                 Content = rc,
                 HorizontalScrollMode = ScrollMode.Disabled,
                 VerticalScrollMode = ScrollMode.Enabled,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             };
 
-            _popup = new Windows.UI.Xaml.Controls.Primitives.Popup
+            // 挂到可视树之后才有 Viewport，ChangeView 才有效；所以用 Loaded 起跑，
+            // 而不是赌 effect 执行时控件已经就位。StartRun 自带幂等保护。
+            _scroller.Loaded += (_, _) =>
             {
-                Child = new Border { Width = 280, Height = 520, Child = _scroller },
-                IsOpen = true,
+                if (_timer is null)
+                {
+                    StartRun();
+                }
             };
+
+            return _scroller;
+        }
+
+        private void StartRun()
+        {
+            // 幂等：effect 与 Loaded 都可能调到这里，已经在跑就直接返回。
+            if (_timer is not null || _scroller is null)
+            {
+                return;
+            }
+
+            s_active = this;
+            ResetCounters();
+            Say("[probe] creating RunLog");
+            _log = new RunLog(Mode, ItemCount, ItemHeight, TickMs, MaxPool, RoundTrips, JumpCount,
+                Mode is 1 or 2 or 4);
+            Say("[probe] RunLog dir=" + _log.Directory);
+            EchoStats.Reset();
+            _watch.Restart();
 
             InstallCrashHooks();
 
@@ -257,7 +293,8 @@ namespace UwpApp
             _log.Event("begin", ("mode", Mode), ("items", ItemCount), ("steps", _steps.Count));
         }
 
-        /// <summary>收摊：停 timer、关浮层、摘掉活跃引用。切页、重跑、跑完都走这里。</summary>
+        /// <summary>收摊：停 timer、摘掉活跃引用。切页、重跑、跑完都走这里。</summary>
+        /// <remarks>控件本身由 <c>Native()</c> 宿主负责摘出可视树，这里不管。</remarks>
         private void StopRun()
         {
             if (_timer is { } timer)
@@ -266,17 +303,27 @@ namespace UwpApp
                 _timer = null;
             }
 
-            if (_popup is { } popup)
-            {
-                popup.IsOpen = false;
-                popup.Child = null;
-                _popup = null;
-            }
-
             if (ReferenceEquals(s_active, this))
             {
                 s_active = null;
             }
+        }
+
+        /// <summary>"重跑"要清零计数：否则第二轮的数字是两轮叠加的。</summary>
+        private void ResetCounters()
+        {
+            _prepared = _clearing = _indexChanged = 0;
+            _nullData = _duplicateKey = _indexMismatch = _ghostRows = _ghostVisible = 0;
+            _conservationBroken = _poolOverflow = 0;
+            _mintedBare = _reusedBare = 0;
+            _barePool.Clear();
+            _live.Clear();
+            _cleared.Clear();
+            _changeViewMs.Clear();
+            _tickGapMs.Clear();
+            _lastTickMs = 0;
+            _stepIndex = -1;
+            _stepName = "init";
         }
 
         /// <summary>进程退出/未处理异常的最后一道证据：任何路径都要留下而不是静默。</summary>
