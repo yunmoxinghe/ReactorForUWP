@@ -32,8 +32,8 @@ namespace Reactor.Uwp.Internal;
 /// 把 <see cref="Func{Object, UIElement, UIElement}"/> 形式的托管工厂包装成
 /// ItemsRepeater.ItemTemplate 能接受的原生 IElementFactory 实现。
 /// </summary>
-    internal sealed partial class NativeElementFactory : IDisposable
-    {
+internal sealed partial class NativeElementFactory : IDisposable
+{
     private readonly GetElementFn _get;
     private readonly RecycleElementFn _recycle;
     private readonly Func<object?, UIElement?, UIElement> _create;
@@ -203,6 +203,19 @@ namespace Reactor.Uwp.Internal;
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     private delegate void RecycleElementFn(IntPtr ctx, IntPtr element, IntPtr parent);
 
+    /// <summary>
+    /// 开关原生侧的流程日志（<c>Trace</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 默认关：<c>GetElement</c> / <c>RecycleElement</c> 在滚动时每秒被调用成百上千次，
+    /// 每开一次文件（CreateFile2 + WriteFile + CloseHandle）足以把滚动拖垮。
+    /// 只有查时序问题时才打开。崩溃日志不受它影响——那是留后事的，永远写。
+    /// </remarks>
+    public static bool NativeTrace
+    {
+        set => NativeMethods.SetTrace(value ? 1 : 0);
+    }
+
     private static partial class NativeMethods
     {
         [LibraryImport("Reactor.Uwp.Native.dll", EntryPoint = "RNAF_Create",
@@ -212,5 +225,8 @@ namespace Reactor.Uwp.Internal;
 
         [LibraryImport("Reactor.Uwp.Native.dll", EntryPoint = "RNAF_Release")]
         internal static partial void Release(IntPtr factory);
+
+        [LibraryImport("Reactor.Uwp.Native.dll", EntryPoint = "RNAF_SetTrace")]
+        internal static partial void SetTrace(int enabled);
     }
 }
