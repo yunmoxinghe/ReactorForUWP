@@ -132,8 +132,20 @@ public sealed class ReactorHost
         // 非 UI 线程上它顺带完成 marshal。
         _ = Root.Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
         {
-            _batcher.Reset();
-            Rerender();
+            // BeginRender 顺带清掉本轮的排队标志：渲染期间（同步的控件事件回调里）
+            // 到来的 setState 必须能排上下一轮，而不是被本轮这个已消费的标志位挡掉。
+            _batcher.BeginRender();
+            try
+            {
+                Rerender();
+            }
+            finally
+            {
+                // 必须放 finally：Rerender 抛异常时也要退出渲染态，
+                // 否则之后每一次 setState 都被当成"渲染期间自触发"，
+                // 攒够 50 次就误报渲染死循环。
+                _batcher.EndRender();
+            }
         });
     }
 

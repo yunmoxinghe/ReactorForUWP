@@ -455,22 +455,32 @@ internal sealed class Reconciler
             {
                 // 先复位再渲染：渲染期间（同步的控件事件回调里）到来的 setState
                 // 必须能排上下一轮，而不是被本轮那个已消费的标志位挡掉。
-                node.Rerender.Reset();
-
-                if (!node.IsMounted)
-                {
-                    return;
-                }
-
-                RunPass(() =>
+                // 这里走 BeginRender 而不是 Reset：只有进入渲染态才能识别
+                // "渲染期间触发的请求"，从而挡住 Render()/effect 里同步 setState
+                // 造成的无限自我重渲染（见 RenderBatcher.SelfTriggerCount）。
+                node.Rerender.BeginRender();
+                try
                 {
                     if (!node.IsMounted)
                     {
                         return;
                     }
 
-                    RenderComponentTree(node, wrapper);
-                });
+                    RunPass(() =>
+                    {
+                        if (!node.IsMounted)
+                        {
+                            return;
+                        }
+
+                        RenderComponentTree(node, wrapper);
+                    });
+                }
+                finally
+                {
+                    // 同宿主那条路径：抛异常也要退出渲染态，否则会误报死循环。
+                    node.Rerender.EndRender();
+                }
             }
         }
 

@@ -1,3 +1,4 @@
+using System;
 using Microsoft.UI.Reactor.Core;
 
 namespace Reactor.Core.Tests;
@@ -53,5 +54,64 @@ internal static class RenderBatcherTests
         batcher.Reset();
         batcher.Reset();
         Program.Check("重复复位不改变状态", !batcher.IsQueued);
+
+        // ── 以下守"渲染死循环"：Render() 或 effect 里同步 setState ──
+        // 官方 Reactor 靠 [ThreadStatic] 的同步递归深度挡（MaxRerenderReentrancy = 50）；
+        // 我们是 dispatcher 排队，永远不会同步递归，照搬那个计数器会一直读到 0、保护失效。
+        // 等价物是"连续自触发轮数"：每一轮渲染期间又排下一轮就 +1，断一轮就清零。
+
+        // 6) 每轮渲染都自触发 → 到上限抛
+        var looping = new RenderBatcher();
+        var threw = false;
+        try
+        {
+            for (var i = 0; i < RenderBatcher.MaxSelfTriggerRenders + 5; i++)
+            {
+                looping.BeginRender();   // 渲染开始（清掉本轮排队标志）
+                looping.TrySchedule();   // 渲染期间又 setState —— 自触发
+                looping.EndRender();     // 渲染结束，下一轮已排上，计数留着
+            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            threw = ex.Message.Contains("Render loop detected", StringComparison.Ordinal);
+        }
+
+        Program.Check("渲染期间连续自触发到上限即抛", threw);
+
+        // 7) 只有"连续"才算：中间夹一轮不自触发就要清零，不能误报
+        var mixed = new RenderBatcher();
+        var threwMixed = false;
+        try
+        {
+            for (var i = 0; i < 200; i++)
+            {
+                mixed.BeginRender();
+                mixed.TrySchedule();     // 自触发 +1
+                mixed.EndRender();
+
+                mixed.BeginRender();     // 这一轮渲染期间不 setState
+                mixed.EndRender();       // 没有排队 → 计数清零
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            threwMixed = true;
+        }
+
+        Program.Check("自触发不连续就不算死循环", !threwMixed);
+        Program.Check("断一轮之后计数清零", mixed.SelfTriggerCount == 0);
+
+        // 8) 正常的事件驱动 setState（不在渲染期间）永不进计数
+        var normal = new RenderBatcher();
+        for (var i = 0; i < 100; i++)
+        {
+            normal.TrySchedule();
+            normal.BeginRender();
+            normal.EndRender();
+        }
+
+        Program.Check("渲染外的连发不进自触发计数", normal.SelfTriggerCount == 0);
+        Program.Check("渲染结束后退出渲染态", !normal.IsRendering);
     }
 }

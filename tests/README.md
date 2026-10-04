@@ -31,7 +31,7 @@ dotnet run --project tests/Reactor.Core.Tests -c Release
 | `BreadcrumbTemplateTests.cs` | 面包屑 `ItemTemplate` 的 XAML 文本：只喂数据（喂 UIElement 会 0x800F1000）、样式键转义 |
 | `WeakTableTests.cs` | handler 静态状态必须是**弱键**：控件不可达就能被 GC 回收（`Unmount` 漏写也不泄漏） |
 | `LocalizationKeysTests.cs` | `x:Uid` 资源键的拼法：斜杠分层（不是点）、`[using:...]` 不被剥掉、附加属性必须带宿主 |
-| `RenderBatcherTests.cs` | 重渲染批处理：一轮内连发 N 次 `setState` **只渲染一次**（防被改回"收到就渲染"） |
+| `RenderBatcherTests.cs` | 重渲染批处理：一轮内连发 N 次 `setState` **只渲染一次**（防被改回"收到就渲染"）；以及渲染死循环——每轮渲染期间都自触发，连续 50 轮即抛（官方是同步递归深度 50，我们走队列，等价物是"连续自触发轮数"） |
 | `ReorderTests.cs` | 面板重排的同序快路径：顺序没变返回 -1 整段跳过；变了返回第一个不匹配的下标 |
 
 **往这一层加用例的前提**：被测代码不碰 `Windows.UI.Xaml`。碰了就抽——
