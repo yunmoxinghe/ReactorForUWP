@@ -28,7 +28,10 @@ Reactor.Uwp.Native/*.dll
 Reactor.Uwp.Native/*.pdb
 
 # 临时文件和诊断数据
-.workbuddy/
+# 注意：这里用 .workbuddy/* 而不是 .workbuddy/ —— 父目录一旦被整体排除，
+# 子目录就没法再"反忽略"回来。skills/ 是要给后人（AI）看的排查笔记，必须入库。
+.workbuddy/*
+!.workbuddy/skills/
 dumps/
 *.dmp
 
