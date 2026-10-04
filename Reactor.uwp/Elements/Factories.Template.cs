@@ -127,13 +127,18 @@ public static partial class Factories
     /// <param name="itemHeight">项高度（等高是该实现的前提）。</param>
     /// <param name="height">容器高度；null 表示撑满父容器。</param>
     /// <param name="buffer">视窗外额外渲染的项数（上下各 buffer 项）。</param>
+    /// <param name="itemKey">
+    /// 项的稳定身份选择器。数据源会发生插入/删除/移动时<b>必须</b>给，
+    /// 否则下标位移会让已挂载的项拿错内容；只追加或整体替换的场景可以不给。
+    /// </param>
     public static VirtualizingListElement VirtualizingList(
         IReadOnlyList<object?> items,
         Func<object?, int, Element> itemTemplate,
         double itemHeight,
         double? height = null,
-        int buffer = 4) =>
-        new(items, itemTemplate, itemHeight) { Height = height, Buffer = buffer };
+        int buffer = 4,
+        Func<object?, object?>? itemKey = null) =>
+        new(items, itemTemplate, itemHeight) { Height = height, Buffer = buffer, ItemKey = itemKey };
 
     // ── 弹窗 ──────────────────────────────────────────────────
 

@@ -164,6 +164,16 @@ public sealed record VirtualizingListElement(
 
     /// <summary>视窗外额外渲染的项数（上下各 <c>Buffer</c> 项），用于减少快速滚动时的白块。</summary>
     public int Buffer { get; init; } = 4;
+
+    /// <summary>
+    /// 项的稳定身份（React identity）。null = 退化为用下标当身份。
+    /// </summary>
+    /// <remarks>
+    /// 下标天生不稳定：在头部插入一项，后面所有项的下标全部 +1，而它们的身份并没变。
+    /// 给了选择器之后，插入/删除只挪位置，已挂载的控件继续复用、内容走 Patch。
+    /// 选择器返回 null 的项按退化处理；同一批里出现重复 key 时，这几项退化为下标身份。
+    /// </remarks>
+    public Func<object?, object?>? ItemKey { get; init; }
 }
 
 /// <summary>
