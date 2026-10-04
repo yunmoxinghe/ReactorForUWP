@@ -11,6 +11,54 @@ UWP + WinUI 2 的声明式 UI 框架：用 C# 描述界面，不写 XAML。
 `Windows.UI.Xaml` / `Microsoft.UI.Xaml`（WinUI 2）控件，样式、输入法、无障碍、
 性能全部是原生的；代价是被 WinUI 2 的能力边界卡住。
 
+## 兼容性契约（两条硬规则）
+
+写代码前先看这两条，它们是本仓库的判定标准，不是口号：
+
+1. **允许、并且要求与官方 Reactor（WinUI 3 版 `microsoft-ui-reactor`）互兼容。**
+   API 的形状跟官方对齐：`Component` / `Element`（不可变 record）/ `Render()` /
+   `UseState` / `UseEffect` / `UseRef` / `Context` / `Component<TProps>` /
+   `Factories` 里的工厂方法名与参数顺序都按官方来。
+   **判据**：一份组件代码从官方 Reactor 搬到本框架（或反过来），只需要换
+   `using` 与元素所在命名空间，业务逻辑一行都不用改。
+
+2. **实现一律套 WinUI 2，不另起炉灶。**
+   每个元素落成真控件，改外观走官方属性 / `Style` / `ItemTemplate`，取资源走官方
+   资源解析，行为调官方 API。
+   **判据三条**：
+   - **真控件**——`VisualTreeHelper` 走出来的节点类型是 `Windows.UI.Xaml.*` 或
+     `Microsoft.UI.Xaml.*`，不是我们自己画的 `StackPanel` 拼装。
+   - **真行为**——调官方那个 API，而不是"模拟得差不多"。返回导航就是
+     `Frame.GoBack()`（不是 `Navigate` 到上一页），音效就是
+     `ElementSoundPlayer.Play(ElementSoundKind.GoBack)`。
+   - **真资源**——主题资源是活引用（`{ThemeResource}` 的语义，切主题要跟着变），
+     不是"渲染那一刻抄一份颜色下来"。
+
+三条里任何一条不满足，就是**替代实现**，必须在代码注释里写明为什么不走官方路径，
+否则视为待修的债。
+
+`VirtualizingList` 以前是最大的一处替代实现（自绘 `ScrollViewer` + `Canvas`），
+原因是 WinUI **2** 把 `IElementFactory` 标成 internal、C# 侧实现不了；
+原生桥 `Reactor.Uwp.Native.dll` 补上之后已改回官方路径：
+`ItemsRepeater` + 原生元素工厂（x64 / arm64），**x86 没有原生桥时自动回退自绘**并
+Trace 一行。实测（5000 项）只 realize 48 个容器，虚拟化是生效的。
+`ItemKey` 在 `ItemsRepeater` 那条路上不起作用（WinUI 2 的 ItemsRepeater 不做按 key
+复用，官方 Reactor 同样如此），只在自绘回退路径上生效。
+
+**对齐清单当前全绿**：
+
+| 项 | 落在哪 | 官方对应 |
+|---|---|---|
+| 页面导航与返回 | `Frame.Navigate` / `Frame.GoBack()` + 真 BackStack，返回音效 `ElementSoundPlayer.Play(ElementSoundKind.GoBack)` | 同 |
+| 受控属性的回声抑制 | `Internal/EchoGuard.cs`（`Expect` 登记期望值 / `Consume` 匹配即吞 / `Forget` 卸载清理），已在 Text / Check / Value / Selection / Toggle 等 7 处接好 | `Controlled<TValue, TArgs>` + counter-echo |
+| 虚拟化长列表 | `ItemsRepeater` + 原生元素工厂 | 同 |
+| 主题资源 | `ThemeResource` 活引用（`SolidColorBrush` 按键共享，切主题统一改 `Color`） | `{ThemeResource}` 语义 |
+
+已经修掉的那几处留着当反面教材（注释里都写了实证）：面包屑曾用自绘
+`StackPanel` + "›"（→ 现为真 `BreadcrumbBar` + `ItemTemplate`）；条目外观曾"把字号设到
+`BreadcrumbBar` 上指望继承"（→ `BreadcrumbBarItem` 默认样式硬设了字号，继承链断）；
+向量里曾直接塞 `UIElement`（→ 0x800F1000，UIElement 天生要占树上一个位置，当不了数据）。
+
 ```csharp
 public sealed class CounterPage : Component
 {
@@ -32,7 +80,7 @@ public sealed class CounterPage : Component
 | 路径 | 是什么 |
 |---|---|
 | `Reactor.uwp/` | 框架本体，就是发布出去的那个包 |
-| `Reactor.Uwp.Native/` | C++/WinRT 原生桥（给 `ItemsRepeater` 补 `IElementFactory`），含 x64 预编译产物，`build.bat` 可重建 |
+| `Reactor.Uwp.Native/` | C++/WinRT 原生桥（给 `ItemsRepeater` 补 `IElementFactory`），含 x64 / arm64 预编译产物，`build.bat` 可重建 |
 | `UwpApp/` | 测试壳：压测 M0~M5、虚拟列表 / Echo 实验室、CoreLoop 回归、元素画廊，一次部署点菜单跑完 |
 | `tests/` | 控制台用例（EchoGuard、虚拟列表身份、Hook、Context），不需要开 App |
 | `diag-run.ps1` | 无人值守压测：构建 → 同步产物 → 启动 → 等本轮跑完 → 打印 summary |
@@ -52,8 +100,8 @@ dotnet build UwpApp/UwpApp.csproj -c Debug -p:Platform=x64
 dotnet build samples/Reactor.Template/Reactor.Template.csproj -c Debug -p:Platform=x64
 dotnet build samples/Reactor.Gallery/Reactor.Gallery.csproj -c Debug -p:Platform=x64
 
-# 打框架包
-dotnet pack Reactor.uwp/Reactor.uwp.csproj -c Release -p:Platform=x64
+# 打框架包（别带 -p:Platform：会把托管程序集编成 x64 专属，arm64 消费方报 CS8012）
+dotnet pack Reactor.uwp/Reactor.uwp.csproj -c Release
 ```
 
 已部署过一次之后，压测可以无人值守：
@@ -73,10 +121,15 @@ dotnet pack Reactor.uwp/Reactor.uwp.csproj -c Release -p:Platform=x64
 
 ## 已知限制
 
-- **原生桥只有 x64 预编译产物**：x86 / arm64 下自定义 `IElementFactory` 不可用，
-  其余功能不受影响
+- **原生桥有 x64 / arm64 两个架构的预编译产物**（`build.bat` / `build.bat arm64` 可重建），
+  x86 没有：x86 下自定义 `IElementFactory` 不可用，其余功能不受影响
 - **WinUI 2 的能力边界就是本框架的边界**：它没封装的控件走 `Native()` 逃生舱或自己补
-- API 尚未稳定；xml 文档、多架构原生产物还没有
+- 构建 `Reactor.uwp` 时有一条 `warning MSB3277`（`WindowsBase` 版本冲突）：来自
+  `Microsoft.UI.Xaml` 的 buildTransitive 硬加进来的 WebView2 **WPF** 程序集
+  `Microsoft.Web.WebView2.Wpf.dll`。UWP 侧的 WebView2 走 `Microsoft.UI.Xaml.winmd`，
+  这个 dll 既不引用也不会被加载。试过 `ExcludeAssets` / `Reference Remove` 都挡不住
+  （它是 targets 里直接加的），也没有掩盖掉——留着它，别为它改构建配置
+- API 尚未稳定；xml 文档还没有
 - AOT 发布在部分环境下没验成（`link.exe` 取不到 SDK 库路径），
   建议在 Developer PowerShell 里跑一次：
   `dotnet publish UwpApp/UwpApp.csproj -c Release -p:Platform=x64 -p:PublishProfile=win-x64`
