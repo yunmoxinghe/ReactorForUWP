@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 
 namespace Reactor.Uwp.Internal;
 
@@ -47,19 +48,99 @@ internal sealed class EchoGuard
         _pending[control] = (value, Environment.TickCount64);
 
     /// <summary>
-    /// 控件事件中调用：回读值等于登记值 → 判定为回声（并消费掉登记），返回 true。
+    /// 控件事件中调用：回读值等于登记值 → 判定为回声，返回 true。
     /// </summary>
+    /// <remarks>
+    /// <b>非破坏性语义（2026-10 修正，勿改回去）</b>：只有<b>匹配成功</b>才消费登记。
+    /// 旧实现无条件删除登记，而 TextBox 的粘贴 / IME / selection replacement 会连发
+    /// 多个 TextChanged：第一个把登记吃掉，第二个就被当成用户输入 → 回调 → setState
+    /// → 重渲染把用户刚粘进去的文本覆盖掉（即「粘贴覆盖」bug 的头号嫌疑）。
+    /// <para>
+    /// 状态机：<c>不存在 → 不是回声</c>；<c>相等 → 消费并判定回声</c>；
+    /// <c>不等 → 保留登记，等下一次事件或 TTL</c>；<c>超窗 → 丢弃</c>。
+    /// </para>
+    /// </remarks>
     public bool Consume(object control, object? value)
     {
         if (!_pending.TryGetValue(control, out var pending))
         {
+            EchoStats.NotExpected++;
             return false;
         }
 
-        _pending.Remove(control);
-        return Environment.TickCount64 - pending.Tick <= WindowMs && Equals(pending.Value, value);
+        if (Environment.TickCount64 - pending.Tick > WindowMs)
+        {
+            // 超窗：期望已经陈旧，作废。宁可多回调一次也不能吞掉真实用户操作。
+            _pending.Remove(control);
+            EchoStats.Expired++;
+            return false;
+        }
+
+        if (Equals(pending.Value, value))
+        {
+            _pending.Remove(control);
+            EchoStats.Matched++;
+            return true;
+        }
+
+        // 不匹配：保留登记。这可能是"写值 → 中间态事件 → 最终态事件"的中间那一发。
+        EchoStats.Mismatch++;
+        return false;
     }
 
     /// <summary>丢弃某个控件上未消费的登记（例如控件被卸载）。</summary>
     public void Forget(object control) => _pending.Remove(control);
+}
+
+/// <summary>
+/// 回声抑制的全局计数（诊断用，压测探针会读它）。
+/// </summary>
+internal static class EchoStats
+{
+    /// <summary>匹配成功、判定为回声并吞掉的次数。</summary>
+    public static long Matched;
+
+    /// <summary>有登记但值不等的次数（正常：用户真的改了）。</summary>
+    public static long Mismatch;
+
+    /// <summary>登记超窗作废的次数。</summary>
+    public static long Expired;
+
+    /// <summary>没有登记、直接按用户输入处理的次数。</summary>
+    public static long NotExpected;
+
+    public static void Reset()
+    {
+        Matched = 0;
+        Mismatch = 0;
+        Expired = 0;
+        NotExpected = 0;
+    }
+
+    public static string Snapshot() =>
+        $"matched={Matched} mismatch={Mismatch} expired={Expired} notExpected={NotExpected}";
+}
+
+/// <summary>
+/// 渲染代际：只用于丢弃<b>过期 render / 异步回调</b>，<b>不参与回声抑制</b>。
+/// </summary>
+/// <remarks>
+/// 职责必须和 <see cref="EchoGuard"/> 分开：回声抑制回答"这个事件是不是我自己刚写进去的"，
+/// 代际回答"这个异步结果是不是已经属于上一轮 render"。混成一个 token 会变成难以维护的大杂烩。
+/// <para>
+/// 用法：<c>var token = gen.Next(); StartAsync(...);</c> 回来时 <c>if (gen.IsStale(token)) return;</c>
+/// </para>
+/// </remarks>
+internal sealed class RenderGeneration
+{
+    private long _current;
+
+    /// <summary>当前代际。</summary>
+    public long Current => _current;
+
+    /// <summary>开启新一轮（重渲染时调用），返回本轮 token。</summary>
+    public long Next() => Interlocked.Increment(ref _current);
+
+    /// <summary>该 token 是否属于过期的一轮。</summary>
+    public bool IsStale(long token) => token != Interlocked.Read(ref _current);
 }
