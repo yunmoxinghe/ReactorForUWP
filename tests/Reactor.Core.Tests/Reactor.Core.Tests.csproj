@@ -22,6 +22,8 @@
     <Compile Include="Program.cs" />
     <Compile Include="HookTests.cs" />
     <Compile Include="ContextTests.cs" />
+    <Compile Include="EchoGuardTests.cs" />
+    <Compile Include="VirtualListTests.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -30,6 +32,10 @@
     <Compile Include="..\..\Reactor.uwp\Core\Context.cs" Link="Reactor\Context.cs" />
     <Compile Include="..\..\Reactor.uwp\Core\ContextScope.cs" Link="Reactor\ContextScope.cs" />
     <Compile Include="..\..\Reactor.uwp\Elements\Optional.cs" Link="Reactor\Optional.cs" />
+    <!-- 纯逻辑，不依赖 Windows.UI.Xaml：回声抑制与代际可以在无 UI 线程的环境下断言 -->
+    <Compile Include="..\..\Reactor.uwp\Internal\EchoGuard.cs" Link="Reactor\EchoGuard.cs" />
+    <!-- 虚拟化列表的身份解析：key vs index，同样不碰 XAML -->
+    <Compile Include="..\..\Reactor.uwp\Internal\VirtualKeys.cs" Link="Reactor\VirtualKeys.cs" />
   </ItemGroup>
 
 </Project>

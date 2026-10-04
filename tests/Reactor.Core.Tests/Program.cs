@@ -19,6 +19,8 @@ internal static class Program
 
         HookTests.Run();
         ContextTests.Run();
+        EchoGuardTests.Run();
+        VirtualListTests.Run();
 
         Console.WriteLine();
         Console.WriteLine(new string('-', 60));
