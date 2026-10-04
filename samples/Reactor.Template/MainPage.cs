@@ -65,60 +65,20 @@ public sealed class MainPage : Component
 
     /// <summary>
     /// 应用图标。<c>Package.Current.Logo</c> 交出来的是
-    /// <c>file:///&lt;安装目录&gt;/Assets/…</c>；官方给包内资源的通道是
-    /// <c>ms-appx:///相对路径</c>，所以这里就地映射一次。
-    /// </summary>
-    private static readonly string AppLogo = ReadPackage(
-        p => ToAppx(p.Logo?.ToString()),
-        "Assets/StoreLogo.png");
-
-    /// <summary>
-    /// <c>file:///&lt;安装目录&gt;/Assets/x.png</c> → <c>ms-appx:///Assets/x.png</c>。
+    /// <c>file:///&lt;安装目录&gt;/Assets/…</c>，也可能是清单里那个带反斜杠的
+    /// 相对路径（<c>Assets\StoreLogo.png</c>）；两种都<b>原样</b>往下传。
     /// </summary>
     /// <remarks>
-    /// 框架的 <c>Image</c> / <c>BitmapIcon</c> 也会做这一步（见
-    /// <c>Internal/PackUri.cs</c>），但本项目引用的是发布包，吃不到框架里的新逻辑，
-    /// 所以这里就地做掉。映射是幂等的：已经是 <c>ms-appx:</c> 的会原样返回。
+    /// 官方给包内资源的通道是 <c>ms-appx:///相对路径</c>，而这里拿到的是
+    /// <c>file:///</c> —— 映射由<b>框架</b>做：alpha.5 起 <c>Image</c> 的
+    /// <c>Source</c> 与 <c>BitmapIcon</c> 的 <c>UriSource</c> 都过
+    /// <c>Internal/PackUri.cs</c>（顺带把反斜杠换成正斜杠、补齐三斜杠）。
+    /// 之前这里有一份就地实现，是因为引用的老包里没那段逻辑；包升上来后就该删，
+    /// 留着只会变成"两处各改一半"的坑。
     /// </remarks>
-    private static string? ToAppx(string? raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw))
-        {
-            return null;
-        }
-
-        // URI 只认正斜杠；清单里给的是 Windows 路径分隔符。
-        var normalized = raw.Replace('\\', '/').Trim();
-
-        if (!normalized.StartsWith("file:///", StringComparison.OrdinalIgnoreCase))
-        {
-            return normalized;
-        }
-
-        string installPath;
-
-        try
-        {
-            installPath = Package.Current.InstalledLocation.Path;
-        }
-        catch (Exception)
-        {
-            // 未打包运行时取不到安装目录，保持原样。
-            return normalized;
-        }
-
-        var normalizedInstall = installPath.Replace('\\', '/').TrimEnd('/');
-        var at = normalized.IndexOf(normalizedInstall, StringComparison.OrdinalIgnoreCase);
-
-        if (at < 0)
-        {
-            return normalized;
-        }
-
-        var relative = normalized[(at + normalizedInstall.Length)..].TrimStart('/');
-
-        return relative.Length == 0 ? normalized : "ms-appx:///" + relative;
-    }
+    private static readonly string AppLogo = ReadPackage(
+        p => p.Logo?.ToString(),
+        "Assets/StoreLogo.png");
     private static readonly string Version = ReadPackage(
         p => $"{p.Id.Version.Major}.{p.Id.Version.Minor}.{p.Id.Version.Build}.{p.Id.Version.Revision}",
         "1.0.0.0");
