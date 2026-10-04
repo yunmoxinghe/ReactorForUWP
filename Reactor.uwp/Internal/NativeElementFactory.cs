@@ -81,9 +81,6 @@ internal sealed partial class NativeElementFactory : IDisposable
     /// </summary>
     public object ItemTemplate { get; }
 
-    // 二分定位用的临时开关（定位完删除）
-    internal static bool EnableRecycleUnwrap = true;
-
     private IntPtr? _parentPtr;
     private UIElement? _parentView;
 
@@ -146,9 +143,7 @@ internal sealed partial class NativeElementFactory : IDisposable
         }
         try
         {
-            _recycleManaged(
-                EnableRecycleUnwrap ? TryUnwrap<UIElement>(element) : null,
-                EnableRecycleUnwrap ? TryUnwrap<UIElement>(parent) : null);
+            _recycleManaged(TryUnwrap<UIElement>(element), TryUnwrap<UIElement>(parent));
         }
         catch
         {

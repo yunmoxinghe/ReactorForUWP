@@ -123,12 +123,16 @@ dotnet pack Reactor.uwp/Reactor.uwp.csproj -c Release
 
 - **原生桥有 x64 / arm64 两个架构的预编译产物**（`build.bat` / `build.bat arm64` 可重建），
   x86 没有：x86 下自定义 `IElementFactory` 不可用，其余功能不受影响
-- **WinUI 2 的能力边界就是本框架的边界**：它没封装的控件走 `Native()` 逃生舱或自己补
-- 构建 `Reactor.uwp` 时有一条 `warning MSB3277`（`WindowsBase` 版本冲突）：来自
-  `Microsoft.UI.Xaml` 的 buildTransitive 硬加进来的 WebView2 **WPF** 程序集
-  `Microsoft.Web.WebView2.Wpf.dll`。UWP 侧的 WebView2 走 `Microsoft.UI.Xaml.winmd`，
-  这个 dll 既不引用也不会被加载。试过 `ExcludeAssets` / `Reference Remove` 都挡不住
-  （它是 targets 里直接加的），也没有掩盖掉——留着它，别为它改构建配置
+- **WinUI 2 的能力边界就是本框架的边界**：它没封装的控件走 `Native()` 逃生舱或自己补。
+  已暴露的元素约 50 个（见 `Reactor.uwp/Elements/Factories*.cs`），
+  `KeyboardAccelerator` / `TabIndex` / `ContextFlyout` / `AccessKey` /
+  控件级 `ElementSoundMode` / `Focus()` 这些**都还没暴露**
+- **静态状态靠 `Unmount` 清理**：handler 用 `static Dictionary<控件, 状态>` 存回调
+  （16 处），键是控件实例的强引用。只要 `Unmount` 被调用就正常；若哪天某条路径
+  绕过了 `Reconciler.UnmountTree`，控件会被字典永久持有 → 泄漏。
+  根治办法是换 `ConditionalWeakTable`（弱键），还没做
+- **本地化没接**：示例里的 `Strings/**/*.resw` 是死文件——框架不认 `x:Uid`，
+  资源不会自动套上去
 - API 尚未稳定；xml 文档还没有
 - AOT 发布在部分环境下没验成（`link.exe` 取不到 SDK 库路径），
   建议在 Developer PowerShell 里跑一次：
