@@ -27,11 +27,15 @@
        授权：MIT，与仓库根目录的 LICENSE 一致（nuget.org 上 Reactor.Uwp 这个 id 未被占用）。 -->
   <PropertyGroup>
     <PackageId>Reactor.Uwp</PackageId>
-    <PackageVersion>0.1.0-alpha.1</PackageVersion>
+    <PackageVersion>0.1.0-alpha.2</PackageVersion>
     <Authors>云漠星</Authors>
     <Copyright>Copyright © 2026 云漠星</Copyright>
     <Description>UWP + WinUI 2 的声明式 UI 框架：用 C# 描述界面，不写 XAML。映射 WinUI 2 控件（不是内置控件树），带自实现的虚拟列表与 ItemsRepeater 原生工厂桥。</Description>
     <PackageTags>uwp;winui;winui2;reactor;declarative-ui;winrt;csharp;xaml-free</PackageTags>
+    <!-- 有这两个 nuget.org 包页面才会显示仓库入口，否则页面上一片空白、找不回源码。 -->
+    <PackageProjectUrl>https://github.com/yunmoxinghe/ReactorForUWP</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/yunmoxinghe/ReactorForUWP.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <IncludeSymbols>true</IncludeSymbols>

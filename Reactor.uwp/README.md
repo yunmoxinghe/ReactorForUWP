@@ -2,6 +2,21 @@
 
 UWP + WinUI 2 的声明式 UI 框架：用 C# 描述界面，不写 XAML。
 
+- **仓库**：https://github.com/yunmoxinghe/ReactorForUWP
+- **包**：https://www.nuget.org/packages/Reactor.Uwp
+- **问题反馈**：https://github.com/yunmoxinghe/ReactorForUWP/issues
+- **许可**：MIT
+
+仓库里各目录的用途（这个包只含 `Reactor.uwp/`）：
+
+| 路径 | 是什么 |
+|---|---|
+| `Reactor.uwp/` | 框架本体，就是本包 |
+| `Reactor.Uwp.Native/` | C++/WinRT 原生桥源码 + x64 预编译产物 |
+| `UwpApp/` | 测试壳：压测 M0~M5、虚拟列表 / Echo 实验室等，手动验证用 |
+| `tests/` | 控制台用例，`dotnet run` 即跑 |
+| `diag-run.ps1` | 无人值守压测脚本，带 `-Mode` |
+
 ## 路线
 
 **映射 WinUI 2，不是内置控件树。** 元素最终都落成真实的 `Windows.UI.Xaml` /
@@ -14,7 +29,7 @@ UWP + WinUI 2 的声明式 UI 框架：用 C# 描述界面，不写 XAML。
 ## 安装
 
 ```xml
-<PackageReference Include="Reactor.Uwp" Version="0.1.0-alpha.1" />
+<PackageReference Include="Reactor.Uwp" Version="0.1.0-alpha.2" />
 ```
 
 消费方项目要求（与本机工程一致）：
