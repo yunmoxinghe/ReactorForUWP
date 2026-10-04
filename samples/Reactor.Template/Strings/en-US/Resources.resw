@@ -22,17 +22,21 @@
   <data name="AppDescription" xml:space="preserve">
     <value>A Reactor.Uwp starting point</value>
   </data>
-  <!-- Keys for x:Uid. Mirrors Strings\zh-CN\Resources.resw one-to-one. -->
-  <data name="HomeWelcome.Text" xml:space="preserve">
+  <!-- Keys for x:Uid. Mirrors Strings\zh-CN\Resources.resw one-to-one.
+       标识符逐条照抄参考实现 UWP-Blank-Template 的
+       UWPTemplate.Package\Strings\<locale>\Resources.resw：
+       HomePageWelcomeText / AppearanceGroup / SoundGroup / AboutGroup。
+       不要重命名 —— 资源标识符一变就等于删旧条目 + 加新条目，翻译要重来。 -->
+  <data name="HomePageWelcomeText.Text" xml:space="preserve">
     <value>Welcome to the home page, a UWP template app</value>
   </data>
-  <data name="SectionAppearance.Text" xml:space="preserve">
+  <data name="AppearanceGroup.Text" xml:space="preserve">
     <value>Appearance</value>
   </data>
-  <data name="SectionSound.Text" xml:space="preserve">
+  <data name="SoundGroup.Text" xml:space="preserve">
     <value>Sound</value>
   </data>
-  <data name="SectionAbout.Text" xml:space="preserve">
+  <data name="AboutGroup.Text" xml:space="preserve">
     <value>About</value>
   </data>
 </root>

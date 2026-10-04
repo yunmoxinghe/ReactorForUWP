@@ -16,10 +16,16 @@
 
   <mp:PhoneIdentity PhoneProductId="21CE1A0C-1D93-4A28-AE85-B632189C9236" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
-  <!-- 显示名走资源：改 Strings\<locale>\Resources.resw 里的 AppDisplayName，
-       不用动 manifest。 -->
+  <!-- 包名（Properties/DisplayName）写字面量，不走 ms-resource。
+       原因：Package.Current.DisplayName 读的就是这一项，而它走的是 AppModel
+       的实时 ms-resource 解析 —— 实测在本包上会解析到错误的资源
+       （拿到的是 SoundGroup/Text 的值「声音」），而按名字查资源表
+       （ResourceLoader.GetString("AppDisplayName")）始终正确。
+       这是 AppModel 层的行为，代码改不动，所以这一项直接用字面量兜死。
+       开始菜单/磁贴走的是下面 uap:VisualElements/@DisplayName，那条实测解析
+       正确，仍然保留 ms-resource（外壳名字照旧本地化）。 -->
   <Properties>
-    <DisplayName>ms-resource:AppDisplayName</DisplayName>
+    <DisplayName>Reactor 模板</DisplayName>
     <PublisherDisplayName>yunmoxing</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>

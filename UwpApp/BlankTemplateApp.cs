@@ -49,8 +49,69 @@ public sealed class BlankTemplateApp : Component
     private const string FeedbackUrl = "https://forms.office.com/r/jzsFaQKCpr";
     private const string RepoUrl = "https://github.com/Furry-Xiyi/UWP-Blank-Template";
 
-    private static readonly string AppName = ReadPackage(p => p.DisplayName, "UWP 空白模板");
-    private static readonly string AppLogo = ReadPackage(p => p.Logo?.ToString(), "Assets/StoreLogo.png");
+    /// <summary>
+    /// 应用名。清单的 DisplayName 是字面量（不走 ms-resource），但照样按官方本地化
+    /// 做法留一级兜底：系统没解析出名字时去查资源表，而不是显示 <c>ms-resource:</c>
+    /// 原始引用串。
+    /// </summary>
+    private static readonly string AppName = ResolveAppName("UWP 空白模板");
+
+    /// <summary>
+    /// 应用图标。<c>Package.Current.Logo</c> 交出来的是
+    /// <c>file:///&lt;安装目录&gt;/Assets/…</c>；官方给包内资源的通道是
+    /// <c>ms-appx:///相对路径</c>。
+    /// </summary>
+    private static readonly string AppLogo = ReadPackage(
+        p => ToAppx(p.Logo?.ToString()),
+        "Assets/StoreLogo.png");
+
+    /// <summary>
+    /// <c>file:///&lt;安装目录&gt;/Assets/x.png</c> → <c>ms-appx:///Assets/x.png</c>。
+    /// </summary>
+    /// <remarks>
+    /// 框架的 <c>Image</c> / <c>BitmapIcon</c> 也会做这一步（见
+    /// <c>Internal/PackUri.cs</c>），这里就地做掉是为了不依赖加载时机。
+    /// 映射幂等：已经是 <c>ms-appx:</c> 的会原样返回。
+    /// </remarks>
+    private static string? ToAppx(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        // URI 只认正斜杠；清单里给的是 Windows 路径分隔符。
+        var normalized = raw.Replace('\\', '/').Trim();
+
+        if (!normalized.StartsWith("file:///", StringComparison.OrdinalIgnoreCase))
+        {
+            return normalized;
+        }
+
+        string installPath;
+
+        try
+        {
+            installPath = Package.Current.InstalledLocation.Path;
+        }
+        catch (Exception)
+        {
+            // 未打包运行时取不到安装目录，保持原样。
+            return normalized;
+        }
+
+        var normalizedInstall = installPath.Replace('\\', '/').TrimEnd('/');
+        var at = normalized.IndexOf(normalizedInstall, StringComparison.OrdinalIgnoreCase);
+
+        if (at < 0)
+        {
+            return normalized;
+        }
+
+        var relative = normalized[(at + normalizedInstall.Length)..].TrimStart('/');
+
+        return relative.Length == 0 ? normalized : "ms-appx:///" + relative;
+    }
     private static readonly string Version = ReadPackage(
         p => $"{p.Id.Version.Major}.{p.Id.Version.Minor}.{p.Id.Version.Build}.{p.Id.Version.Revision}",
         "1.0.0.0");
@@ -381,6 +442,9 @@ public sealed class BlankTemplateApp : Component
 
                     SettingsExpander(
                         header: AppName,
+                        // 不要给 BitmapIcon 设 Width / Height：它不像 Image 那样把位图
+                        // 缩放适配，设了尺寸就是把 106px 的原图裁出一个角，看着就像
+                        // "图标缩没了"。原版同样不给尺寸，交给宿主去缩放。
                         headerIcon: BitmapIcon(AppLogo, showAsMonochrome: false),
                         description: $"©{DateTime.Now.Year} {Publisher}。保留所有权利。",
                         content: TextBlock(Version)
@@ -476,6 +540,38 @@ public sealed class BlankTemplateApp : Component
         catch (Exception ex)
         {
             Reactor.Uwp.Hosting.ReactorApplication.Trace($"[app] 打开外链失败: {url} - {ex.Message}");
+        }
+    }
+
+    private static string ResolveAppName(string fallback)
+    {
+        // 与 Template 同一套顺序：资源表优先，其次清单属性（并挡掉未解析的引用串）。
+        if (ReadLocalized("AppDisplayName") is { } localized)
+        {
+            return localized;
+        }
+
+        var name = ReadPackage(p => p.DisplayName, string.Empty);
+
+        return !string.IsNullOrWhiteSpace(name) &&
+               !name.StartsWith("ms-resource:", StringComparison.OrdinalIgnoreCase)
+            ? name
+            : fallback;
+    }
+
+    private static string? ReadLocalized(string key)
+    {
+        try
+        {
+            var value = Windows.ApplicationModel.Resources.ResourceLoader
+                .GetForViewIndependentUse()
+                .GetString(key);
+
+            return string.IsNullOrEmpty(value) ? null : value;
+        }
+        catch (Exception)
+        {
+            return null;
         }
     }
 

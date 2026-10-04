@@ -21,19 +21,21 @@
   <data name="AppDescription" xml:space="preserve">
     <value>Reactor.Uwp 起始模板</value>
   </data>
-  <!-- x:Uid 用的键：名字写成 <Uid>.<属性>。
-       代码侧对应 TextBlock(...).Uid("HomeWelcome")，框架挂载时按
-       "HomeWelcome/Text" 与 "HomeWelcome.Text" 两种形式查（见 Internal/Localization.cs）。 -->
-  <data name="HomeWelcome.Text" xml:space="preserve">
+  <!-- x:Uid 用的键：名字写成 <Uid>.<属性>，PRI 里点会转成分层
+       （HomePageWelcomeText.Text → Resources/HomePageWelcomeText/Text，
+       已用 makepri dump 验过）。
+       标识符逐条照抄参考实现 UWP-Blank-Template 的
+       UWPTemplate.Package\Strings\<locale>\Resources.resw。 -->
+  <data name="HomePageWelcomeText.Text" xml:space="preserve">
     <value>欢迎来到主页，这是一个 UWP 模板应用</value>
   </data>
-  <data name="SectionAppearance.Text" xml:space="preserve">
+  <data name="AppearanceGroup.Text" xml:space="preserve">
     <value>外观</value>
   </data>
-  <data name="SectionSound.Text" xml:space="preserve">
+  <data name="SoundGroup.Text" xml:space="preserve">
     <value>声音</value>
   </data>
-  <data name="SectionAbout.Text" xml:space="preserve">
+  <data name="AboutGroup.Text" xml:space="preserve">
     <value>关于</value>
   </data>
 </root>

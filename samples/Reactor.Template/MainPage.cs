@@ -49,8 +49,76 @@ public sealed class MainPage : Component
     private const string NugetUrl = "https://www.nuget.org/packages/Reactor.Uwp";
     private const string FeedbackUrl = "https://github.com/yunmoxinghe/ReactorForUwp/issues";
 
-    private static readonly string AppName = ReadPackage(p => p.DisplayName, "Reactor 模板");
-    private static readonly string AppLogo = ReadPackage(p => p.Logo?.ToString(), "Assets/StoreLogo.png");
+    /// <summary>
+    /// 应用名：<b>一律自己按名字查资源表</b>（resw 里的 <c>AppDisplayName</c>），
+    /// 不用 <c>Package.Current.DisplayName</c> 当来源。
+    /// </summary>
+    /// <remarks>
+    /// 清单的 <c>uap:VisualElements/@DisplayName</c> 是 <c>ms-resource:AppDisplayName</c>
+    /// （外壳/开始菜单走这条，实测解析正确），但 <c>Package.Current.DisplayName</c>
+    /// 读的是 <c>&lt;Properties&gt;/&lt;DisplayName&gt;</c> 那条链 —— 它走 AppModel 的
+    /// 实时 ms-resource 解析，实测在本包上会<b>解析到错误的资源</b>（拿到的是
+    /// <c>SoundGroup/Text</c> 的值「声音」）。按名字查资源表则始终正确。
+    /// 所以这里资源表优先，取不到才退回清单属性（清单里该项已写字面量）。
+    /// </remarks>
+    private static readonly string AppName = ResolveAppName("Reactor 模板");
+
+    /// <summary>
+    /// 应用图标。<c>Package.Current.Logo</c> 交出来的是
+    /// <c>file:///&lt;安装目录&gt;/Assets/…</c>；官方给包内资源的通道是
+    /// <c>ms-appx:///相对路径</c>，所以这里就地映射一次。
+    /// </summary>
+    private static readonly string AppLogo = ReadPackage(
+        p => ToAppx(p.Logo?.ToString()),
+        "Assets/StoreLogo.png");
+
+    /// <summary>
+    /// <c>file:///&lt;安装目录&gt;/Assets/x.png</c> → <c>ms-appx:///Assets/x.png</c>。
+    /// </summary>
+    /// <remarks>
+    /// 框架的 <c>Image</c> / <c>BitmapIcon</c> 也会做这一步（见
+    /// <c>Internal/PackUri.cs</c>），但本项目引用的是发布包，吃不到框架里的新逻辑，
+    /// 所以这里就地做掉。映射是幂等的：已经是 <c>ms-appx:</c> 的会原样返回。
+    /// </remarks>
+    private static string? ToAppx(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        // URI 只认正斜杠；清单里给的是 Windows 路径分隔符。
+        var normalized = raw.Replace('\\', '/').Trim();
+
+        if (!normalized.StartsWith("file:///", StringComparison.OrdinalIgnoreCase))
+        {
+            return normalized;
+        }
+
+        string installPath;
+
+        try
+        {
+            installPath = Package.Current.InstalledLocation.Path;
+        }
+        catch (Exception)
+        {
+            // 未打包运行时取不到安装目录，保持原样。
+            return normalized;
+        }
+
+        var normalizedInstall = installPath.Replace('\\', '/').TrimEnd('/');
+        var at = normalized.IndexOf(normalizedInstall, StringComparison.OrdinalIgnoreCase);
+
+        if (at < 0)
+        {
+            return normalized;
+        }
+
+        var relative = normalized[(at + normalizedInstall.Length)..].TrimStart('/');
+
+        return relative.Length == 0 ? normalized : "ms-appx:///" + relative;
+    }
     private static readonly string Version = ReadPackage(
         p => $"{p.Id.Version.Major}.{p.Id.Version.Minor}.{p.Id.Version.Build}.{p.Id.Version.Revision}",
         "1.0.0.0");
@@ -235,10 +303,12 @@ public sealed class MainPage : Component
     private static Element HomeBody() =>
         Group(
             VStack(12,
-                // .Uid 对应 XAML 的 x:Uid：挂载时按 Uid.Property 查
+                // .Uid 对应 XAML 的 x:Uid：挂载时按 Uid/Property 查
                 // Strings/<语言>/Resources.resw 并覆盖这里的文本（见 README）。
+                // 标识符照抄参考实现（HomePageWelcomeText），不要自己另起一套：
+                // 资源标识符一改，对翻译团队就等于删旧条目 + 加新条目。
                 TextBlock("欢迎来到主页，这是一个 UWP 模板应用")
-                    .Uid("HomeWelcome")
+                    .Uid("HomePageWelcomeText")
                     .FontSize(24)
                     .HAlign(HorizontalAlignment.Center),
                 Button("查看Github仓库", () => OpenLink(RepoUrl))
@@ -280,7 +350,7 @@ public sealed class MainPage : Component
                 // 组间距来自标题的 Margin(0,32,0,8)（首组为 0,0,0,8），不是嵌套 StackPanel。
                 VStack(4,
                     // ── 外观 ──────────────────────────────────
-                    SectionHeader("外观", uid: "SectionAppearance", isFirst: true),
+                    SectionHeader("外观", uid: "AppearanceGroup", isFirst: true),
 
                     SettingsExpander(
                         header: "应用主题",
@@ -333,7 +403,7 @@ public sealed class MainPage : Component
                         .Padding(16, 16),
 
                     // ── 声音 ──────────────────────────────────
-                    SectionHeader("声音", uid: "SectionSound"),
+                    SectionHeader("声音", uid: "SoundGroup"),
 
                     SettingsCard(
                         header: "控件声音",
@@ -346,10 +416,15 @@ public sealed class MainPage : Component
                         .Padding(16, 16),
 
                     // ── 关于 ──────────────────────────────────
-                    SectionHeader("关于", uid: "SectionAbout"),
+                    SectionHeader("关于", uid: "AboutGroup"),
 
                     SettingsExpander(
                         header: AppName,
+                        // 不要给 BitmapIcon 设 Width / Height：它不像 Image 那样把位图
+                        // 缩放适配，设了尺寸就是把 106px 的原图裁出一个角，看着就像
+                        // "图标缩没了"。原版（UWP-Blank-Template 的
+                        // <BitmapIcon ShowAsMonochrome="False"/>）同样不给尺寸，
+                        // 交给宿主（卡片的图标呈现器）去缩放。
                         headerIcon: BitmapIcon(AppLogo, showAsMonochrome: false),
                         description: $"©{DateTime.Now.Year} {Publisher}。保留所有权利。",
                         content: TextBlock(Version)
@@ -446,6 +521,51 @@ public sealed class MainPage : Component
         catch (Exception ex)
         {
             Reactor.Uwp.Hosting.ReactorApplication.Trace($"[app] 打开外链失败: {url} - {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 应用名：清单里是 <c>ms-resource:AppDisplayName</c>，<c>Package.Current.DisplayName</c>
+    /// 由运行时解析成本地化字符串；万一它没解析（未打包运行、PRI 没跟上）会原样返回
+    /// <c>ms-resource:...</c>，这时按官方做法自己查资源表兜底，而不是把原始引用串
+    /// 显示给用户。
+    /// </summary>
+    private static string ResolveAppName(string fallback)
+    {
+        // 资源表优先：应用名的权威来源就是 resw 里的 AppDisplayName
+        // （清单的 ms-resource:AppDisplayName 指向同一个键，系统也是查它）。
+        // 先查资源可以彻底避开"系统没解析出 ms-resource、原样返回引用串"这一档。
+        if (ReadLocalized("AppDisplayName") is { } localized)
+        {
+            return localized;
+        }
+
+        // 资源没跟上（未打包 / PRI 缺失）时才退回清单属性，且同样挡掉未解析的引用串。
+        var name = ReadPackage(p => p.DisplayName, string.Empty);
+
+        return !string.IsNullOrWhiteSpace(name) &&
+               !name.StartsWith("ms-resource:", StringComparison.OrdinalIgnoreCase)
+            ? name
+            : fallback;
+    }
+
+    /// <summary>按资源标识符查字符串；没这条资源返回 <c>null</c>。</summary>
+    private static string? ReadLocalized(string key)
+    {
+        try
+        {
+            // GetForViewIndependentUse 而不是 GetForCurrentView：后者要求当前线程
+            // 有 CoreWindow，静态初始化阶段调用会直接抛。
+            var value = Windows.ApplicationModel.Resources.ResourceLoader
+                .GetForViewIndependentUse()
+                .GetString(key);
+
+            // 键不存在时 GetString 返回空串（不抛）。
+            return string.IsNullOrEmpty(value) ? null : value;
+        }
+        catch (Exception)
+        {
+            return null;
         }
     }
 
