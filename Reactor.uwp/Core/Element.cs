@@ -152,27 +152,48 @@ public record ElementModifiers
 
 /// <summary>组件元素：描述一个子组件的类型与 props，实例由 Reconciler 创建并维护。</summary>
 /// <remarks>
-/// 参数与属性都要标注：<c>Reconciler</c> 用 <c>Activator.CreateInstance</c> 造组件实例，
-/// AOT/裁剪下只标属性不够——值是从参数流进字段的，ILC 会在赋值那一步报
-/// IL2069（"value stored in field ... does not satisfy ... requirements"），
-/// 并且类型可能在裁剪时被丢掉无参构造函数。
+/// 构造参数与属性都要标 <see cref="DynamicallyAccessedMembersAttribute"/>：
+/// <c>Reconciler</c> 读 <see cref="ComponentType"/> 后用 <c>Activator.CreateInstance</c>
+/// 造组件实例，AOT/裁剪下只标一处不够——值是从参数流进字段的，ILC 会在赋值那步报
+/// IL2069；而读取走的是属性，属性没标注则实参不满足形参要求（IL2072）。
+/// 类型一旦被裁掉无参构造函数，运行时才炸，构建期看不出来。
+///
+/// 这里刻意不用 record 的位置参数写法：<c>record ComponentElement(Type X, ...)</c>
+/// 的位置参数上 <c>[property: ...]</c> 是非法位置（编译器直接忽略整块，
+/// 报 "'property' is not a valid attribute location"），只剩 <c>[param:]</c>，
+/// 属性那条链路就断在编译器的静默忽略里。写成显式属性才能两处都标上。
 /// </remarks>
-public record ComponentElement(
-    [param: DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
-    [property: DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
-    Type ComponentType,
-    object? Props = null) : Element;
+public record ComponentElement : Element
+{
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
+    public Type ComponentType { get; init; }
+
+    public object? Props { get; init; }
+
+    public ComponentElement(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
+        Type componentType,
+        object? props = null)
+    {
+        ComponentType = componentType;
+        Props = props;
+    }
+}
 
 /// <summary>强类型组件元素：允许通过 record with 语法修改 props。</summary>
-public sealed record ComponentElement<TProps>(
-    [param: DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
-    [property: DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
-    Type ComponentType,
-    TProps Props) : ComponentElement(ComponentType, Props)
+public sealed record ComponentElement<TProps> : ComponentElement
 {
     public new TProps Props
     {
         get => (TProps)base.Props!;
         init => base.Props = value;
+    }
+
+    public ComponentElement(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
+        Type componentType,
+        TProps props)
+        : base(componentType, props)
+    {
     }
 }
