@@ -26,6 +26,9 @@
     <Compile Include="VirtualListTests.cs" />
     <Compile Include="BreadcrumbTemplateTests.cs" />
     <Compile Include="WeakTableTests.cs" />
+    <Compile Include="LocalizationKeysTests.cs" />
+    <Compile Include="RenderBatcherTests.cs" />
+    <Compile Include="ReorderTests.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -43,6 +46,12 @@
     <!-- handler 静态状态的弱键表：ConditionalWeakTable 是 BCL 类型，
          所以这条能在无 UWP 运行时的控制台里真跑起来（含 GC 语义） -->
     <Compile Include="..\..\Reactor.uwp\Internal\WeakTable.cs" Link="Reactor\WeakTable.cs" />
+    <!-- x:Uid 资源键的拼法：纯字符串，锁住"斜杠分层 + [using:...] 不被剥掉" -->
+    <Compile Include="..\..\Reactor.uwp\Internal\LocalizationKeys.cs" Link="Reactor\LocalizationKeys.cs" />
+    <!-- 重渲染批处理：纯状态，锁住"N 次 setState 只渲染一次" -->
+    <Compile Include="..\..\Reactor.uwp\Core\RenderBatcher.cs" Link="Reactor\RenderBatcher.cs" />
+    <!-- 面板重排的快路径判断：纯引用比较，锁住"同序即跳过" -->
+    <Compile Include="..\..\Reactor.uwp\Internal\Reorder.cs" Link="Reactor\Reorder.cs" />
   </ItemGroup>
 
 </Project>

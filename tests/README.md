@@ -5,7 +5,7 @@
 
 | 层 | 在哪 | 怎么跑 | 覆盖什么 |
 |---|---|---|---|
-| 1 · 控制台测试集 | `Reactor.Core.Tests/` | `.\tests\run.ps1`（或 `dotnet run --project tests/Reactor.Core.Tests -c Release`） | 纯逻辑：hook / 上下文 / 受控属性回声 / 虚拟化身份 / 真控件映射的文本构造。**不开 App、不部署、退出码非 0 即失败** |
+| 1 · 控制台测试集 | `Reactor.Core.Tests/` | `.\tests\run.ps1`（或 `dotnet run --project tests/Reactor.Core.Tests -c Release`） | 纯逻辑：hook / 上下文 / 受控属性回声 / 虚拟化身份 / 真控件映射的文本构造 / 弱键表 / 本地化键名 / 渲染批处理 / 重排快路径。**不开 App、不部署、退出码非 0 即失败** |
 | 2 · App 内测试壳 | `UwpApp/`（菜单见 `TestShell.cs`） | VS F5 部署，或 `.\diag-run.ps1 -Mode N` 无人值守 | 要真 XAML 才能验的：压测 M0~M5、虚拟列表 / Echo 实验室、CoreLoop 回归、元素画廊、XAML/代码 控件对照、设置页复现 |
 | 3 · 示例 | `samples/` | 见 `samples/README.md` | 包消费方视角：`Reactor.Template`（起点模板）与 `Reactor.Gallery`（8 页）能编译、能跑，说明包导出的 API 够用 |
 
@@ -30,6 +30,9 @@ dotnet run --project tests/Reactor.Core.Tests -c Release
 | `VirtualListTests.cs` | 虚拟化身份模型 **key ≠ index**（头部插入后已挂载项不拿错内容） |
 | `BreadcrumbTemplateTests.cs` | 面包屑 `ItemTemplate` 的 XAML 文本：只喂数据（喂 UIElement 会 0x800F1000）、样式键转义 |
 | `WeakTableTests.cs` | handler 静态状态必须是**弱键**：控件不可达就能被 GC 回收（`Unmount` 漏写也不泄漏） |
+| `LocalizationKeysTests.cs` | `x:Uid` 资源键的拼法：斜杠分层（不是点）、`[using:...]` 不被剥掉、附加属性必须带宿主 |
+| `RenderBatcherTests.cs` | 重渲染批处理：一轮内连发 N 次 `setState` **只渲染一次**（防被改回"收到就渲染"） |
+| `ReorderTests.cs` | 面板重排的同序快路径：顺序没变返回 -1 整段跳过；变了返回第一个不匹配的下标 |
 
 **往这一层加用例的前提**：被测代码不碰 `Windows.UI.Xaml`。碰了就抽——
 把纯逻辑那一段单独成文件（像 `Internal/BreadcrumbTemplate.cs` 那样），

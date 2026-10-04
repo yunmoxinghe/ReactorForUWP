@@ -18,13 +18,17 @@ internal static class Program
         Console.WriteLine(new string('-', 60));
 
         // 顺序即分组：核心 hook → 上下文 → 受控属性回声 → 虚拟化身份 →
-        // 真控件映射（面包屑 ItemTemplate）。新增分组往这里加一行即可。
+        // 真控件映射（面包屑 ItemTemplate）→ 弱键表 → 本地化键名 →
+        // 重渲染批处理 → 面板重排。新增分组往这里加一行即可。
         HookTests.Run();
         ContextTests.Run();
         EchoGuardTests.Run();
         VirtualListTests.Run();
         BreadcrumbTemplateTests.Run();
         WeakTableTests.Run();
+        LocalizationKeysTests.Run();
+        RenderBatcherTests.Run();
+        ReorderTests.Run();
 
         Console.WriteLine();
         Console.WriteLine(new string('-', 60));
