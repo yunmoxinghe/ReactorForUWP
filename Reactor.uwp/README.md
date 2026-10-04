@@ -103,7 +103,8 @@ nuget.org 侧的策略（`Account → Trusted Publishing`）需要四个值：
 | Workflow File | `publish.yml`（只填文件名，不带路径） |
 | Environment | 留空 |
 
-仓库侧只留一个 secret：`NUGET_USER` = nuget.org 的 profile name（不是邮箱）。
+仓库侧只留一个 secret：`NUGET_USER` = nuget.org 的**用户名** `yunmoxing`
+（不是邮箱，也不是 GitHub 上的 `yunmoxinghe`）。
 
 两点提醒：策略是**按包所有者**生效的，不限于单个包 id，
 所以 scope 建议用 glob 限定到 `Reactor.Uwp`；
