@@ -12,4 +12,9 @@
     <Platform Solution="*|x86" Project="x86" />
     <Deploy />
   </Project>
+  <!-- 示例：装 NuGet 包而不是引用框架源码。只列 x64（原生桥只有 win-x64）。 -->
+  <Project Path="samples/Reactor.Samples/Reactor.Samples.csproj">
+    <Platform Solution="*|x64" Project="x64" />
+    <Deploy />
+  </Project>
 </Solution>

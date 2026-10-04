@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <Nullable>enable</Nullable>
+    <UseUwp>true</UseUwp>
+
+    <!-- 只留 x64：Reactor.Uwp 的原生桥（给 ItemsRepeater 补的 IElementFactory）
+         目前只有 win-x64 预编译产物，其它架构下自定义工厂不可用。
+         示例不打算演示"半可用"状态，所以不列 x86/arm64。 -->
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <DefaultLanguage>zh-CN</DefaultLanguage>
+
+    <!-- 示例不开 AOT：PublishAot 需要本机 Windows SDK 的 link.exe 环境，
+         开了之后 F5 要跑一次完整的本机编译，对"照着抄代码"没有帮助。 -->
+    <PublishAot>false</PublishAot>
+    <EnableMsixTooling>true</EnableMsixTooling>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 示例的关键点：装 NuGet 包，不引用仓库里的框架源码。
+         这样示例编译通过 = 包里的公共 API 真够用（源码引用会掩盖导出问题）。
+         升级用法：改这里的 Version。 -->
+    <PackageReference Include="Reactor.Uwp" Version="0.1.0-alpha.2" />
+  </ItemGroup>
+</Project>
