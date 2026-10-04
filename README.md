@@ -136,6 +136,20 @@ dotnet publish samples/Reactor.Template/Reactor.Template.csproj -c Release -p:Pl
 - **要眼睛过一遍的那部分**：部署 `UwpApp`，左侧菜单直接切页。压测页会把
   ItemsRepeater 内嵌在页面里跑，页面上有进度行和「重跑 / 停止」
 
+## 状态更新是批处理的（setState 不同步生效）
+
+一轮消息泵内连发 N 次 `setState` **只渲染一次**：请求先排队，
+排到当前调用栈结束之后才跑。这是 React / 官方 Reactor 的语义，
+也是"一个事件处理里改三个状态"不付三倍代价的原因。
+
+代价是：**`setState` 之后立刻读 UI 状态，读到的还是旧值**。
+要读新值就在渲染之后读（`UseEffect` 里）。
+
+两条重渲染路径各有一把独立的锁（`RenderBatcher`）：
+宿主那把管整棵树，每个组件节点自己的那把管它的子树——
+子组件的粒度更细，不能共用宿主的排队状态，否则宿主一轮渲染会把
+子组件的更新并掉。
+
 ## 已知限制
 
 - **只支持 x64 / arm64**：原生桥 `Reactor.Uwp.Native.dll` 有这两个架构的预编译产物
@@ -149,6 +163,10 @@ dotnet publish samples/Reactor.Template/Reactor.Template.csproj -c Release -p:Pl
   `ContentControl.Content`、`ToolTip`、`AutomationProperties.Name`
   （清单在 `Internal/Localization.cs`）。XAML 编译器是<b>照 resw 里写了什么</b>
   生成赋值，纯代码没有那份清单，只能按类型试；需要别的属性时用 `Native()`
+- **切语言会重建整棵树**：`x:Uid` 只在挂载时解析（对齐 XAML 编译器生成的
+  初始化代码），所以语言变了必须重新 `Build` 一遍，光重渲染没用。
+  宿主已接好 `ResourceContext.QualifierValues` 的 `Language` 变化，
+  会自动重建；代价是焦点会丢
 - API 尚未稳定；xml 文档还没有
 - **测试集里没有一项碰真实 XAML 控件**（全是纯逻辑），真控件行为的回归靠
   `UwpApp` 手跑 + 每次改动后 AOT 发布一次

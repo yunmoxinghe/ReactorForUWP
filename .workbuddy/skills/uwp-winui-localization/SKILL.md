@@ -238,9 +238,19 @@ makepri dump -if resources.pri -of dump.xml
 
 XAML 应用切语言后会重建页面，纯代码 UI 不会。所以必须显式做这三步，缺一个都不生效：
 
-1. 订阅 `ResourceContext.GetForCurrentView().QualifierValues.MapChanged`（或 app 自己切语言时主动触发）；
+1. 订阅 `ResourceContext.GetForViewIndependentUse().QualifierValues.MapChanged`
+   （用 view-independent：`GetForCurrentView()` 要求线程有 CoreWindow，订阅点未必满足）；
 2. **重建 ResourceLoader**（`_loader = null`），只清自己的字典没用；
 3. 把文本重新写回控件 —— 要么重渲染整棵树，要么给每个带 Uid 的元素重新 Apply 一次。
+
+**第 3 步有个坑**：如果 `ApplyUid` 只在**挂载**时跑（对齐 XAML 编译器的初始化语义），
+那么切语言后走的是 patch 路径，根本不会重跑它 —— **光重渲染没用，界面文本纹丝不动**。
+必须强制整树 `Build` 一遍。本仓库的做法是宿主置一个 `ForceRebuild` 标志位，
+下一轮渲染直接 `Build` 而不是 `Patch`（代价：焦点会丢，切语言本来就是全局重来）。
+
+**订阅放哪**：不要挂在静态事件上（`Localization.LanguageChanged += …` 会把整个控件树
+钉在进程级对象上）。放在宿主里持有委托 —— `ResourceContext` 是进程级单例，
+委托由宿主持有，生命周期才跟宿主一致。
 
 ## 包内资源（图标/图片）：代码里必须自己补 `ms-appx:`
 
