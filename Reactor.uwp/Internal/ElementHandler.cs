@@ -201,6 +201,11 @@ internal static class ElementHandlerRegistry
         Register<RadioButtonElement, RadioButtonHandler>();
         Register<RadioButtonsElement, RadioButtonsHandler>();
 
+        // 输入类补齐：密码框 / 带建议的输入框 / 数字框（以前只能拿 TextBox 顶替）
+        Register<PasswordBoxElement, PasswordBoxHandler>();
+        Register<AutoSuggestBoxElement, AutoSuggestBoxHandler>();
+        Register<NumberBoxElement, NumberBoxHandler>();
+
         // 进度与媒体
         Register<ProgressElement, ProgressHandler>();
         Register<ProgressRingElement, ProgressRingHandler>();
