@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Reactor.uwp.targets —— 随 NuGet 包分发，只干一件事：把原生桥 DLL 放到真正能加载的位置。
+
+  为什么不能只靠 runtimes\：NuGet 的 runtimes\{rid}\native 只会被 SDK 还原进
+  bin\...\runtimes\{rid}\native\，而 UWP（UseUwp=true + RuntimeIdentifier）真正部署、
+  真正运行的目录是 bin\...\win-$(Platform)\AppX\。
+  LibraryImport("Reactor.Uwp.Native.dll") 按输出目录找，路径不对就是 DllNotFoundException，
+  而且它只在运行时炸，构建期完全看不出来——本机就是这么踩过一次。
+-->
+<Project>
+
+  <PropertyGroup>
+    <ReactorNativeDir>$(MSBuildThisFileDirectory)..\runtimes\win-$(Platform)\native</ReactorNativeDir>
+    <ReactorNativeDll>$(ReactorNativeDir)\Reactor.Uwp.Native.dll</ReactorNativeDll>
+  </PropertyGroup>
+
+  <!-- 常规输出目录：覆盖不带 AppX 子目录的构建形态。 -->
+  <ItemGroup Condition="Exists('$(ReactorNativeDll)')">
+    <None Include="$(ReactorNativeDll)" Visible="false">
+      <Link>Reactor.Uwp.Native.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <!-- AppX 部署目录：带 RID 的 UWP 项目 F5 / 出包都用它。
+       Build 与 Publish 两个时机都挂：只挂 Publish 的话日常调试仍然加载不到。 -->
+  <Target Name="ReactorCopyNativeToAppX"
+          AfterTargets="Build;Publish"
+          Condition="Exists('$(ReactorNativeDll)') and '$(OutDir)' != ''">
+    <Copy SourceFiles="$(ReactorNativeDll)"
+          DestinationFolder="$(OutDir)win-$(Platform)\AppX\"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

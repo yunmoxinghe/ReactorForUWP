@@ -16,15 +16,44 @@
     <InternalsVisibleTo Include="UwpApp" />
   </ItemGroup>
 
-  <!-- ItemsRepeater 自定义工厂的原生桥（预编译产物，见 Reactor.Uwp.Native/build.bat）。
-       Content + Link 会被 GetCopyToOutputDirectoryItems 沿项目引用传给消费方输出目录。
-       缺某架构的预编译产物时静默跳过，不阻塞其它架构构建。 -->
-  <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)..\Reactor.Uwp.Native\prebuilt\$(Platform)\Reactor.Uwp.Native.dll')">
-    <Content Include="$(MSBuildThisFileDirectory)..\Reactor.Uwp.Native\prebuilt\$(Platform)\Reactor.Uwp.Native.dll"
-             Link="Reactor.Uwp.Native.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Visible>false</Visible>
-    </Content>
+  <!-- 注意：这里<b>不</b>再包含原生桥 DLL 的 Content 项。
+       包里的那份走下面的 runtimes\ + build\targets；仓库内构建由 UwpApp 自己
+       显式声明（见 UwpApp.csproj 注释：库项目没有 RID，Content 传不到
+       消费方的 win-x64\AppX\ 目录）。同一个文件同时给 Content 与 None/Pack
+       两个项时 NuGet 会按文件去重，Pack=false 会连带把 runtimes 那份也吞掉。 -->
+
+  <!-- ── NuGet 打包 ──────────────────────────────────────────────
+       用 PackageVersion 而不是 Version：前者只作用于包元数据，不动程序集版本号。
+       PackageLicenseExpression 是占位（MIT），正式发布前按仓库实际授权改。 -->
+  <PropertyGroup>
+    <PackageId>Reactor.Uwp</PackageId>
+    <PackageVersion>0.1.0-alpha.1</PackageVersion>
+    <Authors>gold</Authors>
+    <Description>UWP + WinUI 2 的声明式 UI 框架：用 C# 描述界面，不写 XAML。映射 WinUI 2 控件（不是内置控件树），带自实现的虚拟列表与 ItemsRepeater 原生工厂桥。</Description>
+    <PackageTags>uwp;winui;winui2;reactor;declarative-ui;winrt;csharp;xaml-free</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <!-- NU5100：原生产物放在 runtimes\ 而不是 lib\，NuGet 一律警告"不能加为引用"，
+         这正是我们要的（它不是托管引用），属误报。 -->
+    <NoWarn>$(NoWarn);NU5100</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+    <!-- build\*.targets 会被 NuGet 自动导入消费方项目（build/ 约定，不用手写 props 导入）。 -->
+    <None Include="build\Reactor.uwp.targets" Pack="true" PackagePath="build\" />
+  </ItemGroup>
+
+  <!-- 原生桥 DLL：按架构进 runtimes\，落盘由 build\Reactor.uwp.targets 负责。
+       只打实际存在的架构——缺哪个架构，那个架构就没有自定义工厂（见 README 限制）。 -->
+  <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)..\Reactor.Uwp.Native\prebuilt\x64\Reactor.Uwp.Native.dll')">
+    <None Include="$(MSBuildThisFileDirectory)..\Reactor.Uwp.Native\prebuilt\x64\Reactor.Uwp.Native.dll"
+          Pack="true"
+          PackagePath="runtimes\win-x64\native\"
+          Visible="false" />
   </ItemGroup>
 
   <ItemGroup>
