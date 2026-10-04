@@ -6,7 +6,9 @@ using Windows.ApplicationModel;
 using Windows.UI;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
+using Windows.UI.Core;
 using Windows.UI.Xaml.Media;
+using UwpApp.Services;
 using static Microsoft.UI.Reactor.Factories;
 
 namespace UwpApp;
@@ -54,16 +56,30 @@ public sealed class BlankTemplateApp : Component
         "1.0.0.0");
     private static readonly string Publisher = ReadPackage(p => p.PublisherDisplayName, "");
 
+    /// <summary>
+    /// 诊断用：冷启动后自动点进设置页（TestShell 的"设置页复现"用例由此驱动）。
+    /// </summary>
+    /// <remarks>
+    /// 只用于无人值守复现"进设置页"这条路径（等价于人在左侧点一下"设置"），
+    /// 省掉每次都重新部署一轮的时间。正常 app 永远保持 false。
+    /// </remarks>
+    public static bool AutoOpenSettings { get; set; }
+
     public override Element Render()
     {
         DefineStyles();
 
+        // 四项设置都从持久化里取初值：模板的 SettingsPage.LoadUI() 干的就是
+        // 把 SettingsManager 的值读回控件——只留在内存里的话，重启就打回默认值。
+        var saved = AppSettings.Current;
+
         // 页面栈（XAML 版本是 Frame 的 BackStack）
         var (stack, setStack) = UseState(new[] { PageHome });
-        var (themeIndex, setThemeIndex) = UseState(0);
-        var (materialIndex, setMaterialIndex) = UseState(0);
-        var (paneIndex, setPaneIndex) = UseState(0);
-        var (soundOn, setSoundOn) = UseState(false);
+        var (themeIndex, setThemeIndex) = UseState((int)saved.Theme);
+        var (materialIndex, setMaterialIndex) = UseState((int)saved.Material);
+        var (paneIndex, setPaneIndex) = UseState((int)saved.Pane);
+        var (soundOn, setSoundOn) = UseState(saved.Sound);
+        var (windowActive, setWindowActive) = UseState(true);
 
         var current = stack[^1];
         var canGoBack = stack.Length > 1;
@@ -86,29 +102,114 @@ public sealed class BlankTemplateApp : Component
             }
         }
 
+        // 改一项 = 改 UI state + 落盘（模板是 SettingsManager 的 setter 里直接 Save）。
+        void ChangeTheme(int v)
+        {
+            setThemeIndex(v);
+            AppSettings.Update(x => x.Theme = (AppTheme)v);
+        }
+
+        void ChangeMaterial(int v)
+        {
+            setMaterialIndex(v);
+            AppSettings.Update(x => x.Material = (AppMaterial)v);
+        }
+
+        void ChangePane(int v)
+        {
+            setPaneIndex(v);
+            AppSettings.Update(x => x.Pane = (PanePosition)v);
+        }
+
+        // 除了改 state + 落盘，还要把值推给 XAML 的元素音效开关
+        // （模板：SoundToggle_Toggled → MainPage.ApplySettings）。
+        // 这里不写"启动时设一次"的 UseEffect：那必须在 UI 创建之前做，
+        // 已经放到 App.OnLaunched 里了；Render 里的时机太晚，设了不响。
+        void ChangeSound(bool v)
+        {
+            setSoundOn(v);
+            AppSettings.Update(x => x.Sound = v);
+            ElementSound.Apply(v);
+        }
+
+        // 诊断钩子：置了位就自动点一次设置项，用于无人值守复现"进设置页"。
+        // 放在这里是唯一"触发导航"的入口，跟人点菜单走的是同一条 Navigate。
+        UseEffect(() =>
+        {
+            if (!AutoOpenSettings)
+            {
+                return static () => { };
+            }
+
+            AutoOpenSettings = false;
+
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1000) };
+            void Tick(object? sender, object e)
+            {
+                timer.Stop();
+                Reactor.Uwp.Hosting.ReactorApplication.Trace("[nav-probe] 自动进入设置页");
+                Navigate(PageSettings);
+            }
+
+            timer.Tick += Tick;
+            timer.Start();
+            return () =>
+            {
+                timer.Stop();
+                timer.Tick -= Tick;
+            };
+        });
+
+        // 挂载后再设一次（等价参考模板的 MainPage.ApplySettings）。
+        // 启动时那一次在 App.OnLaunched 里，这里兜底——少了它就会出现
+        // "进页面不响、拨一下开关才响"。
+        UseEffect(() => ElementSound.Apply(soundOn));
+
+        // 窗口失焦时标题栏应用名淡到 0.5（模板 MainPage_CoreWindowActivated）。
+        // deps 为空 = 只在挂载时订阅一次，cleanup 里退订。
+        UseEffect(() =>
+        {
+            var coreWindow = CoreWindow.GetForCurrentThread();
+            void OnActivated(CoreWindow sender, WindowActivatedEventArgs args) =>
+                setWindowActive(args.WindowActivationState != CoreWindowActivationState.Deactivated);
+
+            coreWindow.Activated += OnActivated;
+            return () => coreWindow.Activated -= OnActivated;
+        });
+
         var menuItems = new[] { new NavigationViewItemData("主页", "\uE80F", PageHome) };
 
         // 内容区：面包屑（仅设置页显示）+ 当前页
-        // 对照模板 MainPage.xaml：外层 StackPanel Spacing=4 / Padding="20,16,20,0"，
-        // 里面的 BreadcrumbBar 用 ItemTemplate = SubtitleTextBlockStyle + FontSize 28。
+        // 对照模板 MainPage.xaml：外层 StackPanel Spacing=8 / Padding="24,16,24,16"，
+        // 里面的 BreadcrumbBar 用 ItemTemplate = TextBlock + TitleTextBlockStyle
+        // （28px Semibold，样式自带字号，所以这里不再叠一个 ItemFontSize）。
+        // 现在是真 WinUI 2 BreadcrumbBar：分隔符、条目按钮由官方模板给，
+        // 条目外观走官方 ItemTemplate（XamlReader.Load 出来的 DataTemplate）——
+        // 别改成在 BreadcrumbBar 上设 FontSize，也别把 TextBlock 当 item 喂进
+        // ItemsSource（后者首次布局就崩 0x800F1000，见 BreadcrumbBarHandler 注释）。
         var content = Grid(
             new[] { GridSize.Star() },
             new[] { GridSize.Auto, GridSize.Star() },
-            HStack(4, BreadcrumbBar(
+            HStack(8, BreadcrumbBar(
                     new[] { "设置" },
-                    itemFontSize: 28,
-                    itemStyleKey: "SubtitleTextBlockStyle"))
-                .Padding(20, 16, 20, 0)
+                    itemStyleKey: "TitleTextBlockStyle"))
+                .Padding(24, 16, 24, 16)
                 .VAlign(VerticalAlignment.Center)
                 .IsVisible(current == PageSettings)
                 .Grid(row: 0),
+            // 传进去的是"改 state + 落盘"的版本，不是裸 setter。
             Frame(current == PageSettings
-                    ? SettingsBody(themeIndex, setThemeIndex, materialIndex, setMaterialIndex,
-                        paneIndex, setPaneIndex, soundOn, setSoundOn)
+                    ? SettingsBody(themeIndex, ChangeTheme, materialIndex, ChangeMaterial,
+                        paneIndex, ChangePane, soundOn, ChangeSound)
                     : HomeBody(),
                 // 模板的 ContentFrame 用 Frame.Navigate 的默认过渡；这里是换 Content，
                 // 过渡由 Frame.ContentTransitions 提供（见 FrameElement 注释）。
-                transition: PageTransition.Entrance)
+                transition: PageTransition.Entrance,
+                // 页面栈深度：返回时（深度变小）走返回方向的过渡，并播
+                // ElementSoundKind.GoBack——XAML 版本返回是 ContentFrame.GoBack()，
+                // 有反向过渡 + 专属返回音；不传这个就一律按"进入下一页"处理，
+                // 返回的观感和声音都跟 XAML 对不上。
+                stackDepth: stack.Length)
                 .Grid(row: 1));
 
         return Group(
@@ -116,11 +217,15 @@ public sealed class BlankTemplateApp : Component
             Grid(
                 new[] { GridSize.Star() },
                 new[] { GridSize.Star() },
-                // 模板 MainPage.xaml 的标题栏：Image 16x16 Margin="0,0,8,0"
+                // 模板 MainPage.xaml 的标题栏：Image 16x16 Margin="0,0,12,0"
                 // + 应用名 FontSize=12（CaptionTextBlockStyle 就是 12px）。
                 HStack(
-                    Image(AppLogo).Size(16, 16).Margin(right: 8).VAlign(VerticalAlignment.Center),
-                    TextBlock(AppName).Caption().VAlign(VerticalAlignment.Center)
+                    Image(AppLogo).Size(16, 16).Margin(right: 12).VAlign(VerticalAlignment.Center),
+                    TextBlock(AppName)
+                        .Caption()
+                        .VAlign(VerticalAlignment.Center)
+                        // 失焦时淡到 0.5（模板 CoreWindow.Activated 里改的就是这个）。
+                        .Opacity(windowActive ? 1.0 : 0.5)
                 ).Margin(16, 0, 16, 0).VAlign(VerticalAlignment.Center)
             ).Height(32)
              .Background(new SolidColorBrush(Colors.Transparent))
@@ -134,10 +239,11 @@ public sealed class BlankTemplateApp : Component
                 NavigationView(
                     content,
                     menuItems,
-                    // 模板 MainPage.xaml 写的是 PaneDisplayMode="Auto"，设置项只在
-                    // "顶部" 和 "Auto" 之间切（不是 Top/Left）：
-                    // MainPage.ApplySettings() → s.PanePosition == "Top" ? Top : Auto。
-                    paneDisplayMode: paneIndex == 1 ? NavPaneDisplayMode.Top : NavPaneDisplayMode.Auto,
+                    // 对齐 MainPage.xaml.cs 的 ApplySettings()：
+                    // s.PanePosition == "Top" ? Top : Left —— 另一侧是 Left 不是 Auto。
+                    // Auto 会在窗口变窄时自己折成紧凑面板，内容区左边缘跟着动，
+                    // 看上去就是"内容没对齐"；Left 是恒定的。
+                    paneDisplayMode: paneIndex == 1 ? NavPaneDisplayMode.Top : NavPaneDisplayMode.Left,
                     selectedIndex: current == PageSettings ? -1 : 0,
                     onItemInvoked: index => Navigate(index < 0 ? PageSettings : PageHome),
                     onBackRequested: GoBack,
@@ -250,7 +356,9 @@ public sealed class BlankTemplateApp : Component
                             new[] { "左侧", "顶部" },
                             Optional<int>.Of(paneIndex),
                             setPaneIndex)
-                            .Width(160)
+                            // 模板写的是 MinWidth="160"（不是固定 Width）：
+                            // 条目文字变长时允许自己撑开，不会被裁掉。
+                            .MinWidth(160)
                             .HAlign(HorizontalAlignment.Right))
                         .MinHeight(70)
                         .Padding(16, 16),
@@ -264,13 +372,7 @@ public sealed class BlankTemplateApp : Component
                         headerIcon: FontIcon("\uE767", fontSize: 20),
                         content: ToggleSwitch(
                             Optional<bool>.Of(soundOn),
-                            value =>
-                            {
-                                setSoundOn(value);
-                                ElementSoundPlayer.State = value
-                                    ? ElementSoundPlayerState.On
-                                    : ElementSoundPlayerState.Off;
-                            }).HAlign(HorizontalAlignment.Right))
+                            setSoundOn).HAlign(HorizontalAlignment.Right))
                         .MinHeight(70)
                         .Padding(16, 16),
 
@@ -286,9 +388,9 @@ public sealed class BlankTemplateApp : Component
                         items: new Element?[]
                         {
                             SettingsCard(
-                                // 模板是普通 StackPanel（未设 Spacing，即 0），两个
-                                // HyperlinkButton 之间靠按钮自身的默认内边距留白。
-                                content: VStack(0,
+                                // 模板的 StackPanel 写了 Spacing="8"，两个 HyperlinkButton
+                                // 之间靠这 8px 分开（不是 0）。
+                                content: VStack(8,
                                     HyperlinkButton(TextBlock("QQ 群"), () => OpenLink(QqUrl)),
                                     HyperlinkButton(TextBlock("Discord 频道"), () => OpenLink(DiscordUrl))),
                                 contentAlignment: SettingsCardContentAlignment.Left),

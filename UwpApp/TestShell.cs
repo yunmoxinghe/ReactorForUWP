@@ -36,11 +36,17 @@ public sealed class TestShellApp : Component
         new TestCase("A4 演示", () => Component<A4Demo>()),
         new TestCase("CoreLoop 演示", () => Component<CoreLoopDemo>()),
         new TestCase("Blank 模板页", () => Component<BlankTemplateApp>()),
+        new TestCase("XAML/代码 控件对照", () => Component<XamlDiffProbe>()),
+        new TestCase("面包屑 ItemsSource 探针", () => Component<BreadcrumbProbe>()),
 
         // 慢滚对照：与 M1 / M0 同样的控件路径，只是每 tick 前进 2 项而不是几百项。
         // 用来判定"快速滚动闪烁"的来源——慢滚不闪 = 压测自己的大跨步所致。
         new TestCase("M1 慢滚对照", () => Probe(1, smooth: true)),
         new TestCase("M0 慢滚对照", () => Probe(0, smooth: true)),
+
+        // 进设置页复现：冷启动自动点进 Blank 模板的设置页。用来无人值守验证
+        // "Frame.Navigate + Toolkit SettingsCard + 面包屑"整条路径不会崩。
+        new TestCase("设置页复现", () => Component<SettingsNavProbe>()),
     };
 
     /// <summary>默认落在 M1（原生桥池化 + 折叠）：这是要长期守住的那一档。</summary>

@@ -22,6 +22,21 @@ public sealed partial class App : ReactorApplication<TestShellApp>
     {
         Windows.UI.Xaml.Application.Start(_ => new App());
     }
+
+    /// <summary>
+    /// 抢在 <c>base.OnLaunched</c> 之前把持久化的"控件声音"落到 XAML 的元素音效开关。
+    /// </summary>
+    /// <remarks>
+    /// <c>base.OnLaunched</c> 里会 <c>new ReactorHost(...)</c> 建出整棵界面树，
+    /// 之后设 <c>ElementSoundPlayer.State</c> 就不响了。参考模板的对应位置是
+    /// <c>App.OnLaunched</c> 里的 <c>AppThemeManager.LoadSettings()</c>。
+    /// </remarks>
+    protected override void OnLaunched(Windows.ApplicationModel.Activation.LaunchActivatedEventArgs args)
+    {
+        UwpApp.Services.ElementSound.Apply(UwpApp.Services.AppSettings.Current.Sound);
+
+        base.OnLaunched(args);
+    }
 }
 // 第一个验收组件：纯 C# 描述 UI，含一个 WinUI 2 控件（InfoBar）
 // 验证 XamlControlsResources 纯代码加载链路。
