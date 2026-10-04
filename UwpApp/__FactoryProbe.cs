@@ -55,7 +55,15 @@ namespace UwpApp
         int TickMs = 150,
         int MaxPool = 512,
         int RoundTrips = 20,
-        int JumpCount = 100);
+        int JumpCount = 100,
+        /// <summary>
+        /// true = 逐项慢滚（每 tick 前进 SmoothStep 项），false = 原压测的大跨步跳跃。
+        /// 用来区分"闪烁"的两种来源：大跨步 + 滚动动画会扫过上千个元素必然闪，
+        /// 慢滚若仍闪才是 realization 本身或桥的问题。
+        /// </summary>
+        bool Smooth = false,
+        int SmoothStep = 2,
+        int SmoothTicks = 120);
 
     public sealed class FactoryProbePage : Component<FactoryProbeProps>
     {
@@ -66,6 +74,9 @@ namespace UwpApp
         private int MaxPool => Props.MaxPool;
         private int RoundTrips => Props.RoundTrips;
         private int JumpCount => Props.JumpCount;
+        private bool Smooth => Props.Smooth;
+        private int SmoothStep => Props.SmoothStep;
+        private int SmoothTicks => Props.SmoothTicks;
 
         /// <summary>当前在跑的那一轮：进程级 crash hook 拿不到实例，靠这个静态引用转发。</summary>
         private static FactoryProbePage? s_active;
@@ -233,7 +244,7 @@ namespace UwpApp
             ResetCounters();
             Say("[probe] creating RunLog");
             _log = new RunLog(Mode, ItemCount, ItemHeight, TickMs, MaxPool, RoundTrips, JumpCount,
-                Mode is 1 or 2 or 4);
+                Mode is 1 or 2 or 4, Smooth);
             Say("[probe] RunLog dir=" + _log.Directory);
             EchoStats.Reset();
             _watch.Restart();
@@ -406,6 +417,19 @@ namespace UwpApp
         private void BuildSteps()
         {
             _steps.Clear();
+
+            if (Smooth)
+            {
+                // 慢滚对照：每 tick 只前进 SmoothStep 项，滚动动画覆盖的行数与
+                // 人拖滚动条同量级。此时若还闪，才是 realization / 桥的问题；
+                // 不闪就说明上面的"闪烁"来自压测自己每 150ms 跳几百项。
+                for (int i = 0; i < SmoothTicks; i++)
+                {
+                    _steps.Add(($"S{i}", Math.Min(ItemCount - 1, i * SmoothStep), null));
+                }
+
+                return;
+            }
 
             // A 单向滚动
             for (int i = 0; i <= 10; i++)
@@ -801,9 +825,10 @@ namespace UwpApp
                 int maxPool,
                 int roundTrips,
                 int jumpCount,
-                bool collapseOnRecycle)
+                bool collapseOnRecycle,
+                bool smooth = false)
             {
-                _runId = $"{DateTime.Now:yyyyMMdd-HHmmss}_m{mode}";
+                _runId = $"{DateTime.Now:yyyyMMdd-HHmmss}_m{mode}" + (smooth ? "_smooth" : string.Empty);
                 var root = Windows.Storage.ApplicationData.Current.LocalFolder.Path;
                 _dir = System.IO.Path.Combine(root, "ReactorRuns", _runId);
                 System.IO.Directory.CreateDirectory(_dir);
@@ -819,6 +844,7 @@ namespace UwpApp
                     ("collapseOnRecycle", collapseOnRecycle),
                     ("roundTrips", roundTrips),
                     ("jumpCount", jumpCount),
+                    ("smooth", smooth),
                     ("osVersion", Environment.OSVersion.VersionString),
                     ("startedAt", DateTime.Now.ToString("o", CultureInfo.InvariantCulture)));
 

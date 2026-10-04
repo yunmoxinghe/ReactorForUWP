@@ -36,6 +36,11 @@ public sealed class TestShellApp : Component
         new TestCase("A4 演示", () => Component<A4Demo>()),
         new TestCase("CoreLoop 演示", () => Component<CoreLoopDemo>()),
         new TestCase("Blank 模板页", () => Component<BlankTemplateApp>()),
+
+        // 慢滚对照：与 M1 / M0 同样的控件路径，只是每 tick 前进 2 项而不是几百项。
+        // 用来判定"快速滚动闪烁"的来源——慢滚不闪 = 压测自己的大跨步所致。
+        new TestCase("M1 慢滚对照", () => Probe(1, smooth: true)),
+        new TestCase("M0 慢滚对照", () => Probe(0, smooth: true)),
     };
 
     /// <summary>默认落在 M1（原生桥池化 + 折叠）：这是要长期守住的那一档。</summary>
@@ -44,8 +49,9 @@ public sealed class TestShellApp : Component
     private static readonly NavigationViewItemData[] MenuItems =
         Array.ConvertAll(Cases, c => new NavigationViewItemData(c.Name));
 
-    private static Element Probe(int mode) =>
-        Component<FactoryProbePage, FactoryProbeProps>(new FactoryProbeProps(Mode: mode));
+    private static Element Probe(int mode, bool smooth = false) =>
+        Component<FactoryProbePage, FactoryProbeProps>(
+            new FactoryProbeProps(Mode: mode, Smooth: smooth));
 
     public override Element Render()
     {
