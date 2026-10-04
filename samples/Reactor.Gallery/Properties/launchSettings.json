@@ -1,0 +1,10 @@
+{
+  // commandName 必须是 MsixPackage：VS 才会"构建 -> 部署 MSIX 包 -> 按包身份激活"。
+  // 用 Project（或没有本文件）时 F5 会直接跑 bin 里的裸 exe，进程没有包身份，
+  // Windows.UI.Xaml.dll 启动即 fail-fast（0xc0000409）。
+  "profiles": {
+    "Reactor.Gallery": {
+      "commandName": "MsixPackage"
+    }
+  }
+}

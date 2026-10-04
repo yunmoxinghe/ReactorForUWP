@@ -6,6 +6,13 @@
     <Nullable>enable</Nullable>
     <UseUwp>true</UseUwp>
 
+    <!-- UseUwpTools：官方 UWP + 现代 .NET 模板必设的属性之一（另外三个是
+         UseUwp / EnableMsixTooling / PublishAot + DisableRuntimeMarshalling）。
+         它告诉各 MSBuild 组件"这是 UWP 应用"：自动导入 XAML 文件、导入 XAML
+         编译器、声明必要的项目能力（capabilities）。少了它，MSIX 那一步不参与，
+         VS 也不会把项目当可部署的 UWP 应用——表现就是 F5 只跑裸 exe、没有包身份。 -->
+    <UseUwpTools>true</UseUwpTools>
+
     <!-- 只留 x64：Reactor.Uwp 的原生桥（给 ItemsRepeater 补的 IElementFactory）
          目前只有 win-x64 预编译产物。等其它架构补上再放开 Platforms。 -->
     <Platforms>x64</Platforms>
@@ -23,6 +30,6 @@
 
   <ItemGroup>
     <!-- 新项目的起点：装包，然后把 App.cs / MainPage.cs 改成自己的。 -->
-    <PackageReference Include="Reactor.Uwp" Version="0.1.0-alpha.2" />
+    <PackageReference Include="Reactor.Uwp" Version="0.1.0-alpha.3" />
   </ItemGroup>
 </Project>

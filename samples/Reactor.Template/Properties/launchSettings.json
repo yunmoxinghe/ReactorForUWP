@@ -1,0 +1,17 @@
+{
+  // commandName 必须是 MsixPackage：VS 才会"构建 -> 部署 MSIX 包 -> 按包身份激活"。
+  //
+  // 少了这个文件（或用 commandName: Project），VS 的 F5 会退化成"直接执行
+  // bin\...\win-x64\Reactor.Template.exe"。那个进程没有 AppX 包身份，
+  // Windows.UI.Xaml.dll 启动即 fail-fast，退出码 0xc0000409
+  // （fast-fail 子码 7 = FAST_FAIL_FATAL_APP_EXIT），托管堆栈拦不到，
+  // 看上去像框架崩了，实际只是没带身份。
+  //
+  // 仓库里 UwpApp 之所以能 F5，就是因为它的 Properties/launchSettings.json
+  // 写了同样的 MsixPackage。
+  "profiles": {
+    "Reactor.Template": {
+      "commandName": "MsixPackage"
+    }
+  }
+}
