@@ -41,8 +41,9 @@ UWP + WinUI 2 的声明式 UI 框架：用 C# 描述界面，不写 XAML。
 
 `VirtualizingList` 走的就是官方那条路：`ItemsRepeater` + 原生元素工厂
 （WinUI 2 把 `IElementFactory` 标成 internal、C# 实现不了，由
-`Reactor.Uwp.Native.dll` 补上）。x86 没有该架构的原生产物，会自动回退到自绘
+`Reactor.Uwp.Native.dll` 补上）。原生桥加载失败时（产物没落到 AppX）自动回退到自绘
 （ScrollViewer + Canvas）并 Trace 一行；`ItemKey` 只在回退路径上生效。
+注：项目只支持 x64 / arm64，**不做 x86**，两个架构都有原生产物。
 
 **对齐清单当前全绿**：导航与返回走 `Frame.GoBack()` + 真 BackStack；受控属性走
 `Internal/EchoGuard.cs`（`Expect` 登记 / `Consume` 匹配即吞 / `Forget` 清理，7 处接好），
@@ -118,14 +119,17 @@ manifest 里把入口指向这个类：
 
 ## 已知限制（alpha）
 
-- **原生桥带 x64 与 arm64 两个架构的预编译产物**（x86 没有）。
+- **只支持 x64 / arm64，不做 x86**：原生桥带这两个架构的预编译产物。
   `Reactor.Uwp.Native.dll` 用于给 `ItemsRepeater` 提供 C# 实现的
   `IElementFactory`（WinUI 2 的 C# 投影把该接口标成了 `internal`，只能从原生侧补）。
   两个架构都随包分发在 `runtimes\win-x64\native\` 与 `runtimes\win-arm64\native\`，
   由包内的 `build\Reactor.uwp.targets` 复制到真正会加载它的 `AppX\` 目录。
-  x86 下自定义工厂不可用，其余功能不受影响。
+  缺失架构不打包——那种情况下自定义工厂不可用，回退自绘，其余功能不受影响。
 - **WinUI 2 的能力边界就是本框架的边界**：它没提供的控件（如完整的
-  `TabView` / `AutoSuggestBox` / `SplitView` 封装）需要走 `Native()` 或自己补。
+  `TabView` / `SplitView` 封装）需要走 `Native()` 或自己补。
+  键盘可达性与 `AutomationProperties` 已经照 XAML 同名属性补齐（见
+  `Elements/ElementExtensions.Input.cs`）；`x:Uid` 也接了
+  （`Internal/Localization.cs`），但只能覆盖"有本地化意义"的那几个属性
 - API 尚未稳定，minor 版本内可能变。
 
 ## 状态

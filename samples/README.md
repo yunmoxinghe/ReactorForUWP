@@ -318,7 +318,7 @@ cppwinrt.exe -in "C:\Program Files (x86)\Windows Kits\10\UnionMetadata\10.0.2610
 - **入口没有 App.xaml**：`App.cs` 手写 `Main`，manifest 的 `EntryPoint` 指向它
 - **`VirtualizingList` 的 `itemKey`**：默认路径是 `ItemsRepeater`，它按下标复用容器、
   不做按 key 复用（官方 Reactor 同样如此），所以 `itemKey` 只在**自绘回退**路径上
-  起作用——也就是 x86（没有该架构的原生桥 `Reactor.Uwp.Native.dll`）下才需要它。
+  起作用——也就是原生桥没加载起来（产物没落到 `AppX`）而回退自绘时才需要它。
   那种场景下数据源会插入 / 删除时，不给稳定身份就会因为下标位移而拿错内容
 - **`Native()` 的创建委托要写成字段**：引用必须稳定，只有 `Token` 变化才重建控件
 - **别急着关 AOT**：它能第一时间暴露反射 / 运行时代码生成这类写法；

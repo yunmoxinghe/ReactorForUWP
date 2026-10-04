@@ -40,8 +40,9 @@ UWP + WinUI 2 的声明式 UI 框架：用 C# 描述界面，不写 XAML。
 `VirtualizingList` 以前是最大的一处替代实现（自绘 `ScrollViewer` + `Canvas`），
 原因是 WinUI **2** 把 `IElementFactory` 标成 internal、C# 侧实现不了；
 原生桥 `Reactor.Uwp.Native.dll` 补上之后已改回官方路径：
-`ItemsRepeater` + 原生元素工厂（x64 / arm64），**x86 没有原生桥时自动回退自绘**并
-Trace 一行。实测（5000 项）只 realize 48 个容器，虚拟化是生效的。
+`ItemsRepeater` + 原生元素工厂。**原生桥加载失败时（产物没落到 AppX）自动回退自绘**
+并 Trace 一行——那是部署防御，不是架构分支：项目只支持 x64 / arm64，两个架构都有
+原生产物。实测（5000 项）只 realize 48 个容器，虚拟化是生效的。
 `ItemKey` 在 `ItemsRepeater` 那条路上不起作用（WinUI 2 的 ItemsRepeater 不做按 key
 复用，官方 Reactor 同样如此），只在自绘回退路径上生效。
 
@@ -104,6 +105,22 @@ dotnet build samples/Reactor.Gallery/Reactor.Gallery.csproj -c Debug -p:Platform
 dotnet pack Reactor.uwp/Reactor.uwp.csproj -c Release
 ```
 
+## 发布必须是 AOT
+
+**这个项目的交付形态是原生 AOT，不是 IL。** `UwpApp` 与两个示例都开着
+`<PublishAot>true</PublishAot>` + `<DisableRuntimeMarshalling>true</DisableRuntimeMarshalling>`，
+所以任何"靠反射 / 运行时代码生成 / 动态加载程序集"的写法都会<b>在构建期</b>炸，
+而不是等用户点上去才炸——这正是坚持 AOT 的理由。
+
+```bash
+dotnet publish UwpApp/UwpApp.csproj -c Release -p:Platform=x64 -p:PublishProfile=win-x64
+dotnet publish samples/Reactor.Template/Reactor.Template.csproj -c Release -p:Platform=x64 -p:PublishProfile=win-x64
+```
+
+产物是单个原生 exe（本机 x64 实测 10.9 MB，`PE machine = 0x8664`，
+同目录<b>没有</b>托管 `UwpApp.dll`——有就说明没编成原生）。
+真要反射请显式加 `rd.xml` 或 `[DynamicallyAccessedMembers]`，别关 AOT。
+
 已部署过一次之后，压测可以无人值守：
 
 ```powershell
@@ -121,22 +138,20 @@ dotnet pack Reactor.uwp/Reactor.uwp.csproj -c Release
 
 ## 已知限制
 
-- **原生桥有 x64 / arm64 两个架构的预编译产物**（`build.bat` / `build.bat arm64` 可重建），
-  x86 没有：x86 下自定义 `IElementFactory` 不可用，其余功能不受影响
+- **只支持 x64 / arm64**：原生桥 `Reactor.Uwp.Native.dll` 有这两个架构的预编译产物
+  （`build.bat` / `build.bat arm64` 可重建），**不做 x86**
 - **WinUI 2 的能力边界就是本框架的边界**：它没封装的控件走 `Native()` 逃生舱或自己补。
-  已暴露的元素约 50 个（见 `Reactor.uwp/Elements/Factories*.cs`），
-  `KeyboardAccelerator` / `TabIndex` / `ContextFlyout` / `AccessKey` /
-  控件级 `ElementSoundMode` / `Focus()` 这些**都还没暴露**
-- **静态状态靠 `Unmount` 清理**：handler 用 `static Dictionary<控件, 状态>` 存回调
-  （16 处），键是控件实例的强引用。只要 `Unmount` 被调用就正常；若哪天某条路径
-  绕过了 `Reconciler.UnmountTree`，控件会被字典永久持有 → 泄漏。
-  根治办法是换 `ConditionalWeakTable`（弱键），还没做
-- **本地化没接**：示例里的 `Strings/**/*.resw` 是死文件——框架不认 `x:Uid`，
-  资源不会自动套上去
+  已暴露的元素见 `Reactor.uwp/Elements/Factories*.cs`；
+  仍缺的（如 `TabView` / `TeachingTip` / `MenuBar`）随时可照现有元素加，
+  一个元素 = 一个 record + 一个工厂 + 一个 handler + 一行注册
+- **`x:Uid` 只覆盖"有本地化意义"的那几个属性**：`TextBlock.Text`、
+  `TextBox` 的 `Text` / `Header` / `PlaceholderText`、
+  `ContentControl.Content`、`ToolTip`、`AutomationProperties.Name`
+  （清单在 `Internal/Localization.cs`）。XAML 编译器是<b>照 resw 里写了什么</b>
+  生成赋值，纯代码没有那份清单，只能按类型试；需要别的属性时用 `Native()`
 - API 尚未稳定；xml 文档还没有
-- AOT 发布在部分环境下没验成（`link.exe` 取不到 SDK 库路径），
-  建议在 Developer PowerShell 里跑一次：
-  `dotnet publish UwpApp/UwpApp.csproj -c Release -p:Platform=x64 -p:PublishProfile=win-x64`
+- **测试集里没有一项碰真实 XAML 控件**（全是纯逻辑），真控件行为的回归靠
+  `UwpApp` 手跑 + 每次改动后 AOT 发布一次
 
 ## 发布
 
