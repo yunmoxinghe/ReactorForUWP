@@ -124,6 +124,7 @@ URI 非法 / 资源解析失败，**不抛异常、不报错**，图就是不出
 | 3 | `Get-StartApps` | 外壳（开始菜单）解析出的显示名，与 `Package.Current.DisplayName` 对照即可判定是哪条链坏了 |
 | 4 | 二进制 grep 装的 NuGet 包 | 某个常量/资源在**已安装版本**里到底存不存在 |
 | 5 | 注册表 `HKCU:\...\AppModel\Repository\Packages\<FullName>` | 值是未解析的 `ms-resource:` 原文 → 证明是**实时解析**而非注册期缓存 |
+| 6 | 官方源码对照：`git -C <microsoft-ui-reactor> show v0.1.0-preview.16:src/...` | 某个语义是**官方本来就有的**还是我们自己引入的。本地 clone 带全部 tag，按我们对齐的基线版本取，不要用 main |
 
 PowerShell 输出容易被吞，落文件再读：
 ```powershell
@@ -142,16 +143,72 @@ PowerShell 输出容易被吞，落文件再读：
 
 **用 `winapp run .` 跑，别只 build。** 打包验证加 `-p:GenerateAppxPackageOnBuild=true`。
 
-### AOT 发布：沙箱拦 `reg.exe` → 链接器找不到 `advapi32.lib`
+### AOT 发布撞 `LNK1181: advapi32.lib` —— 先自检探测链，别急着归因
 
-本机安全策略把 `reg.exe` 列进黑名单，而 ILC **靠 `reg.exe` 探测 Windows SDK 路径**。
-探测失败 → `LIB` 没设 → 链接期直接：
+ILC 找链接器/库路径的**真实**链路（`Microsoft.NETCore.Native.Windows.targets:126`）：
+
+1. MSBuild `Exec` 调 `findvcvarsall.bat $(_targetArchitecture)`，`IgnoreExitCode=true` + `ConsoleToMSBuild`
+2. 该 bat 用 `vswhere.exe` 找 VS → `CALL vcvarsall.bat amd64` → `where link` → `ECHO %LIB%`
+3. **exit 0** → 输出 `#` 后那一段进 `AdditionalNativeLibraryDirectories`，`CppLinker` 指向找到的 link.exe
+4. **exit 1** → MSBuild 直接 `Error "Platform linker not found. Ensure you have ... Desktop Development for C++ workload"`
+
+**为什么报的是 LNK1181 而不是 *Platform linker not found***（这两个错的含义完全不同）：
+
+`vcvarsall.bat` 里 VC 的工具路径不靠注册表，所以即使 `reg.exe` 被拦，它照样能设出
+**VC 那半截** `LIB`（`MSVC\14.51\lib\x64`）→ `findvcvarsall.bat` 的 `IF "%LIB%"==""` 不成立
+→ exit 0 → `CppLinker` 正常指向 `...\MSVC\...\bin\Hostx64\x64\link.exe`，
+**不会**触发 *Platform linker not found*。
+但 Windows SDK 那半截（`Windows Kits\10\lib\<ver>\um\x64`，`advapi32.lib` 就在那儿）
+是查注册表拿的 → 被拦 → 这半截丢了 → 链接时找不到 `advapi32.lib` → **LNK1181**。
+
+所以 LNK1181 的准确含义是：**VC 找到了，SDK 没找到**。是环境（注册表探测被拦），
+不是项目配置、也不是框架的问题 —— 别去改 csproj。
+
+自检只要 30 秒，别猜：
+
+```bash
+cmd //c "C:\Users\gold\.nuget\packages\microsoft.dotnet.ilcompiler\<ver>\build\findvcvarsall.bat" x64
+```
+
+成功会打印两行：`...\bin\Hostx64\x64#` 和一条含 `Windows Kits\10\lib\<ver>\um\x64` 的 LIB。
+空输出或非零退出才是探测真坏了。
+
+**`reg.exe` 确实在黑名单里 —— stderr 实证（2026-10-05）：**
 
 ```
-LINK : fatal error LNK1181: 无法打开输入文件"advapi32.lib"
+PROGRAM BLOCKED BY SECURITY POLICY - The sandbox prevented a program on the
+configured Program Blacklist from starting:
+  - reg.exe (C:\WINDOWS\system32\reg.exe)
 ```
 
-看起来像代码/依赖坏了，其实是环境。手动补 `LIB` 再发布即可（PowerShell）：
+紧接着就是 `LINK : fatal error LNK1181: 无法打开输入文件"advapi32.lib"`。
+
+**但拦截是"时灵时不灵"的，别拿一次手动成功当反证。** 同一天我踩过这个坑：
+手动 `reg query HKLM\...\Windows Kits\Installed Roots` 正常返回、
+手动跑 `findvcvarsall.bat x64` 也成功输出完整 LIB、甚至有一次 publish 直接过了
+（exit 0，11.1 MB 产物）—— 于是我判定"沙箱没拦 reg.exe、旧结论是过度归纳"，
+结果下一次 publish 就撞了 LNK1181 并打出上面那段 `PROGRAM BLOCKED`。
+**教训**：手动跑通 ≠ publish 里那条子进程链也跑得通。判据要取**失败那次的完整 stderr**，
+不要取"我试了一下没报错"。
+
+**首选根治方案：绕开探测，别让 ILC 去调 `findvcvarsall.bat`。**
+`Microsoft.NETCore.Native.Windows.targets:126` 那个 `Exec` 的条件是
+`'$(IlcUseEnvironmentalTools)' != 'true'` —— 置为 true 就整个跳过，
+也就不会走到 `vcvarsall.bat` → `reg.exe`（已实测 EXIT=0，无 LNK1181）：
+
+```powershell
+$vc   = "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.51.36231"
+$kits = "C:\Program Files (x86)\Windows Kits\10"
+$sdk  = "$kits\Lib\10.0.26100.0"
+$env:PATH    = "$vc\bin\Hostx64\x64;" + $env:PATH
+$env:LIB     = "$vc\lib\x64;$sdk\um\x64;$sdk\ucrt\x64"
+$env:INCLUDE = "$vc\include;$kits\Include\10.0.26100.0\ucrt;$kits\Include\10.0.26100.0\um;$kits\Include\10.0.26100.0\shared"
+dotnet publish UwpApp\UwpApp.csproj -c Release -p:Platform=x64 -r win-x64 `
+  -p:PublishAot=true -p:IlcUseEnvironmentalTools=true
+```
+
+不改命令行、只补 `LIB` 也能过（已实测两次 EXIT=0），但那条路仍会调 `findvcvarsall.bat`，
+属于"运气好才不撞"：
 
 ```powershell
 $sdk = "C:\Program Files (x86)\Windows Kits\10\Lib\10.0.26100.0"
@@ -159,9 +216,9 @@ $env:LIB = "$sdk\um\x64;$sdk\ucrt\x64;$env:LIB"
 dotnet publish UwpApp\UwpApp.csproj -c Release -p:Platform=x64 -r win-x64 -p:PublishAot=true
 ```
 
-**注意退出码会骗人**：`reg.exe` 被拦时 stderr 有 `PROGRAM BLOCKED BY SECURITY POLICY`，
-即便 publish 实际是成功的（产物已生成），外层也可能把它判成 failed。
-以**产物**为准，不看退出码：exe 的 PE 机器码应为 `0x8664`，且同目录不该有托管主程序集。
+**判成败以产物为准，不看退出码**：沙箱/安全策略的拦截信息会混进 stderr 并污染退出码，
+publish 可能实际成功却被判失败。检查产物：exe 存在、PE 机器码 `0x8664`、
+同目录没有托管主程序集（`UwpApp.dll` 不该出现在 publish 目录）。
 
 ### 示例项目可能引用的是发布包，不是源码
 
@@ -182,6 +239,7 @@ dotnet publish UwpApp\UwpApp.csproj -c Release -p:Platform=x64 -r win-x64 -p:Pub
 - [ ] 上一轮我加的修复，有没有可能是本轮症状的来源？
 - [ ] 静默失败的场景（URI/资源），我有没有先排除"根本没加载"？
 - [ ] 是不是只 build 没部署？（AppX 目录可能是旧的）
+- [ ] 我"试了一下没报错"，试的是**整条链**还是其中一个环节？（手动跑通的子进程 ≠ publish 里那条链也通）
 
 ---
 
