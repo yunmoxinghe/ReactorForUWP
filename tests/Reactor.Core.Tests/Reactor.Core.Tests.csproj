@@ -24,6 +24,7 @@
     <Compile Include="ContextTests.cs" />
     <Compile Include="EchoGuardTests.cs" />
     <Compile Include="VirtualListTests.cs" />
+    <Compile Include="BreadcrumbTemplateTests.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -36,6 +37,8 @@
     <Compile Include="..\..\Reactor.uwp\Internal\EchoGuard.cs" Link="Reactor\EchoGuard.cs" />
     <!-- 虚拟化列表的身份解析：key vs index，同样不碰 XAML -->
     <Compile Include="..\..\Reactor.uwp\Internal\VirtualKeys.cs" Link="Reactor\VirtualKeys.cs" />
+    <!-- 面包屑 ItemTemplate 的 XAML 文本：纯字符串构造，可以脱离 XAML 运行时断言 -->
+    <Compile Include="..\..\Reactor.uwp\Internal\BreadcrumbTemplate.cs" Link="Reactor\BreadcrumbTemplate.cs" />
   </ItemGroup>
 
 </Project>

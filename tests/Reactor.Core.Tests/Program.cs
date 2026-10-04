@@ -17,10 +17,13 @@ internal static class Program
         Console.WriteLine("Reactor 核心逻辑回归测试");
         Console.WriteLine(new string('-', 60));
 
+        // 顺序即分组：核心 hook → 上下文 → 受控属性回声 → 虚拟化身份 →
+        // 真控件映射（面包屑 ItemTemplate）。新增分组往这里加一行即可。
         HookTests.Run();
         ContextTests.Run();
         EchoGuardTests.Run();
         VirtualListTests.Run();
+        BreadcrumbTemplateTests.Run();
 
         Console.WriteLine();
         Console.WriteLine(new string('-', 60));
