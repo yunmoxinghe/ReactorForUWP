@@ -54,8 +54,11 @@ jobs:
           path: artifacts/*
 
       # 临时 key 只有 ~1 小时，所以登录要紧贴 push，不能放在打包前面。
+      #
+      # dry-run 也照跑登录：一来验证 OIDC 链路通不通，二来私有仓库的策略
+      # 初次只有 7 天临时激活期，成功换到一次临时 key 就够把它转成永久，
+      # 不必真的推包上去。
       - name: NuGet login（OIDC → 临时 API key）
-        if: ${{ !inputs.dry-run }}
         id: login
         uses: NuGet/login@v1
         with:
