@@ -8,13 +8,13 @@ namespace UwpApp;
 // 纯 C# 入口：manifest 的 EntryPoint="UwpApp.App" 激活这个无 XAML 的类，
 // WinUI 2 引导与窗口挂载全部由 ReactorApplication<TRoot> 完成。
 // 没有 App.xaml 就没有 XAML 编译器生成的 Main，这里手写等价入口。
-public sealed partial class App : ReactorApplication<__FactoryRuntimeProbeApp> // TEMP: A/B 压测，跑完还原 BlankTemplateApp
+public sealed partial class App : ReactorApplication<TestShellApp>
 {
     // 等价于经典 UWP App.g.cs 中生成的入口：启动 XAML 框架并创建 Application 实例，
     // 随后系统回调 OnLaunched。
     //
-    // 想回到其它演示页时把上面的根组件换成
-    // ElementGallery（新元素演示 / 自检行）或 CoreLoopRegression（7 个回归场景）。
+    // 根组件固定为 TestShellApp：所有测试 / 演示都在里面的菜单里选，
+    // 不要再为了换一个页面改这里（改一次就要重编 + 重部署一轮）。
     //
     // 标题栏扩展（ExtendViewIntoTitleBar）由宿主在 OnLaunched 里统一处理，
     // 页面里用 .TitleBar() 指定拖拽区、用 .OwnsTitleBar() 接管顶部布局。

@@ -4,12 +4,15 @@
 // 每一轮都会落一份可追溯的归档：
 //
 //   ReactorRuns/<runId>/
-//       manifest.json    跑的什么（MODE / 项数 / 布局 / 折叠开关 / 机器信息）
+//       manifest.json    跑的什么（Mode / 项数 / 布局 / 折叠开关 / 机器信息）
 //       config.json      同上，供脚本 diff
 //       events.ndjson    每个检查点一行
 //       summary.json     最终计数 + PASS/FAIL
 //
-// MODE 语义：
+// Mode 由测试壳（UwpApp\TestShell.cs）经 FactoryProbeProps 传入：
+// 菜单前 6 项就是这 6 档，点一下切一档，不必改代码、改文件或重新部署。
+//
+// Mode 语义：
 //   0 = 纯内置：ItemsRepeater + XAML DataTemplate，完全不碰原生桥（基线）
 //   1 = RecyclingElementFactory 池化（maxPool=512，回收时折叠）
 //   2 = RecyclingElementFactory 不复用（maxPool=0，验证无界增长）
@@ -41,129 +44,150 @@ using MuxControls = Microsoft.UI.Xaml.Controls;
 
 namespace UwpApp
 {
-    public sealed class __FactoryRuntimeProbeApp : Component
-    {
-        // 模式：优先读 LocalState\probe-mode.txt，没有就用缺省值。
-        // 文件里写 0~5 之间一个数字即可切模式，不必重新编译 + 重新部署。
-        internal static readonly int MODE = ReadModeOverride(3);
+    /// <summary>
+    /// 压测页参数。测试壳用 <c>Component&lt;T, TProps&gt;</c> 传进来：
+    /// 六种 Mode 就是六份参数，切对照不必再改代码、改文件或重新部署。
+    /// </summary>
+    public sealed record FactoryProbeProps(
+        int Mode = 1,
+        int ItemCount = 5000,
+        double ItemHeight = 32,
+        int TickMs = 150,
+        int MaxPool = 512,
+        int RoundTrips = 20,
+        int JumpCount = 100);
 
-        internal const int ItemCount = 5000;
-        internal const double ItemHeight = 32;
-        internal const int TickMs = 150;
-        internal const int MaxPool = 512;
-        internal const int RoundTrips = 20;
-        internal const int JumpCount = 100;
+    public sealed class FactoryProbePage : Component<FactoryProbeProps>
+    {
+        private int Mode => Props.Mode;
+        private int ItemCount => Props.ItemCount;
+        private double ItemHeight => Props.ItemHeight;
+        private int TickMs => Props.TickMs;
+        private int MaxPool => Props.MaxPool;
+        private int RoundTrips => Props.RoundTrips;
+        private int JumpCount => Props.JumpCount;
+
+        /// <summary>当前在跑的那一轮：进程级 crash hook 拿不到实例，靠这个静态引用转发。</summary>
+        private static FactoryProbePage? s_active;
+        private static bool s_hooksInstalled;
 
         // ── 计数器 ────────────────────────────────────────────────────────
-        private static int s_prepared, s_clearing, s_indexChanged;
-        private static int s_nullData, s_duplicateKey, s_indexMismatch, s_ghostRows, s_ghostVisible;
-        private static int s_conservationBroken, s_poolOverflow;
-        private static int s_mintedBare, s_reusedBare;
-        private static readonly Stack<UIElement> s_barePool = new();
-        private static readonly Dictionary<UIElement, (int Index, string Key)> s_live =
+        private int _prepared, _clearing, _indexChanged;
+        private int _nullData, _duplicateKey, _indexMismatch, _ghostRows, _ghostVisible;
+        private int _conservationBroken, _poolOverflow;
+        private int _mintedBare, _reusedBare;
+        private readonly Stack<UIElement> _barePool = new();
+        private readonly Dictionary<UIElement, (int Index, string Key)> _live =
             new(ReferenceEqualityComparer.Instance);
-        private static readonly List<(UIElement El, string Text)> s_cleared = new();
+        private readonly List<(UIElement El, string Text)> _cleared = new();
 
-        private static ObservableCollection<string> s_items = new();
-        private static ScrollViewer s_scroller = null!;
-        private static RecyclingElementFactory? s_factory;
-        private static RunLog s_log = null!;
+        private ObservableCollection<string> _items = new();
+        private ScrollViewer _scroller = null!;
+        private RecyclingElementFactory? _factory;
+        private RunLog _log = null!;
 
-        private static readonly List<long> s_changeViewMs = new();
-        private static readonly List<long> s_tickGapMs = new();
-        private static readonly Stopwatch s_watch = new();
-        private static long s_lastTickMs;
-        private static readonly List<(string Name, int Index, Action? Mutate)> s_steps = new();
-        private static int s_stepIndex = -1;
-        private static string s_stepName = "init";
+        private readonly List<long> _changeViewMs = new();
+        private readonly List<long> _tickGapMs = new();
+        private readonly Stopwatch _watch = new();
+        private long _lastTickMs;
+        private readonly List<(string Name, int Index, Action? Mutate)> _steps = new();
+        private int _stepIndex = -1;
+        private string _stepName = "init";
 
-        /// <summary>
-        /// 读 <c>LocalState\probe-mode.txt</c> 覆盖模式（内容就是一个 0~5 的数字）。
-        /// </summary>
-        /// <remarks>
-        /// 六种对照要各跑一轮，每次改 const 都得重编 + 重部署一遍很浪费；
-        /// 改成从本地状态读之后，切模式只改文件再启动即可。读不到就退回缺省值。
-        /// </remarks>
-        private static int ReadModeOverride(int fallback)
-        {
-            try
-            {
-                var path = System.IO.Path.Combine(
-                    Windows.Storage.ApplicationData.Current.LocalFolder.Path, "probe-mode.txt");
-
-                if (!System.IO.File.Exists(path))
-                {
-                    return fallback;
-                }
-
-                var text = System.IO.File.ReadAllText(path).Trim();
-                return int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var mode)
-                    && mode is >= 0 and <= 5
-                        ? mode
-                        : fallback;
-            }
-            catch
-            {
-                return fallback;
-            }
-        }
+        /// <summary>本轮的 tick 定时器；切页/重跑时由 <see cref="StopRun"/> 停掉。</summary>
+        private DispatcherTimer? _timer;
+        private Windows.UI.Xaml.Controls.Primitives.Popup? _popup;
+        private Action<string>? _setStatus;
 
         public override Element Render()
         {
+            var (runId, setRunId) = UseState(0);
+            var (status, setStatus) = UseState("未开始");
+
             UseEffect(() =>
             {
                 try
                 {
-                    Say("[probe] effect enter");
-                    StartRun();
+                    Say("[probe] effect enter Mode=" + Mode);
+                    StartRun(setStatus);
                     Say("[probe] StartRun returned");
                 }
                 catch (Exception ex)
                 {
-                    // 注意：这里不能用 s_log?.Event —— 一旦 RunLog 还没建出来就抛异常，
+                    // 注意：这里不能用 _log?.Event —— 一旦 RunLog 还没建出来就抛异常，
                     // 那条 ?. 会让整段故障变成完全静默（本次就是这么丢的第一手证据）。
                     Say("[probe] EX " + ex);
+                    setStatus("EX " + ex.Message);
                 }
-            }, "once");
 
-            return VStack(TextBlock($"factory probe MODE={MODE}"));
+                // 切页 / 重跑：先把上一轮的 timer 与浮层收干净，否则两个实例会同时滚。
+                return () => StopRun();
+            },
+                // 依赖里带上 Props：从 M1 切到 M2 时元素类型相同、会走就地 patch，
+                // 光靠 runId 不会重跑——把参数本身当依赖，换参数就等于换一轮。
+                runId, (object)Props);
+
+            return VStack(
+                TextBlock($"压测 Mode={Mode} ｜ {Describe(Mode)}"),
+                TextBlock($"items={ItemCount} itemH={ItemHeight} tick={TickMs}ms pool={MaxPool}"),
+                TextBlock(status),
+                HStack(
+                    Button("重跑", () => setRunId(runId + 1)),
+                    Button("停止", () => StopRun())
+                )
+            );
         }
+
+        /// <summary>Mode 的一句话说明，页首显示用。</summary>
+        public static string Describe(int mode) => mode switch
+        {
+            0 => "纯内置 ItemsRepeater + XAML DataTemplate（基线）",
+            1 => "原生桥池化，回收时折叠",
+            2 => "原生桥不复用（maxPool=0，看无界增长）",
+            3 => "裸桥自池，不改 Visibility（预期出现幽灵行）",
+            4 => "裸桥自池，回收时折叠（幽灵行应消失）",
+            5 => "极限最小回调：永远返回同一个元素",
+            _ => "未知模式",
+        };
 
         // ── 编排 ──────────────────────────────────────────────────────────
 
         // 同时进 VS 输出窗口和 LocalState\reactor-startup.log，便于首帧就能看到进展。
-        private static void Say(string msg)
+        private void Say(string msg)
         {
             Debug.WriteLine(msg);
             Reactor.Uwp.Hosting.ReactorApplication.Trace(msg);
         }
 
-        private static void StartRun()
+        private void StartRun(Action<string>? setStatus = null)
         {
+            _setStatus = setStatus;
+            s_active = this;
             Say("[probe] creating RunLog");
-            s_log = new RunLog(MODE, ItemCount);
-            Say("[probe] RunLog dir=" + s_log.Directory);
+            _log = new RunLog(Mode, ItemCount, ItemHeight, TickMs, MaxPool, RoundTrips, JumpCount,
+                Mode is 1 or 2 or 4);
+            Say("[probe] RunLog dir=" + _log.Directory);
             EchoStats.Reset();
-            s_watch.Restart();
+            _watch.Restart();
 
-            s_items = new ObservableCollection<string>();
+            _items = new ObservableCollection<string>();
             for (int i = 0; i < ItemCount; i++)
             {
-                s_items.Add(Key(i));
+                _items.Add(Key(i));
             }
 
             var rc = new MuxControls.ItemsRepeater
             {
                 Layout = new MuxControls.StackLayout(),
-                ItemsSource = s_items,
+                ItemsSource = _items,
             };
-            Say("[probe] repeater created items=" + s_items.Count);
+            Say("[probe] repeater created items=" + _items.Count);
             WireRepeaterEvents(rc);
-            Say("[probe] building ItemTemplate MODE=" + MODE);
+            Say("[probe] building ItemTemplate Mode=" + Mode);
             rc.ItemTemplate = BuildTemplate();
             Say("[probe] ItemTemplate ok");
 
-            s_scroller = new ScrollViewer
+            _scroller = new ScrollViewer
             {
                 Width = 260,
                 Height = 500,
@@ -172,9 +196,9 @@ namespace UwpApp
                 VerticalScrollMode = ScrollMode.Enabled,
             };
 
-            var popup = new Windows.UI.Xaml.Controls.Primitives.Popup
+            _popup = new Windows.UI.Xaml.Controls.Primitives.Popup
             {
-                Child = new Border { Width = 280, Height = 520, Child = s_scroller },
+                Child = new Border { Width = 280, Height = 520, Child = _scroller },
                 IsOpen = true,
             };
 
@@ -182,33 +206,42 @@ namespace UwpApp
 
             BuildSteps();
 
-            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(TickMs) };
-            timer.Tick += (_, _) =>
+            _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(TickMs) };
+            _timer.Tick += (_, _) =>
             {
                 // Timer drift：tick 本该 150ms 一次，实测 500~900ms —— gap 就是 UI 线程
                 // 被 realize/layout/同步 IO 占住的直接度量（比 ChangeView 同步耗时有意义）。
-                var now = s_watch.ElapsedMilliseconds;
-                var gap = s_lastTickMs == 0 ? 0 : now - s_lastTickMs;
-                s_lastTickMs = now;
+                var now = _watch.ElapsedMilliseconds;
+                var gap = _lastTickMs == 0 ? 0 : now - _lastTickMs;
+                _lastTickMs = now;
 
                 try
                 {
                     // 上一个 step 已经 settle 完，先做检查点，再走下一步。
-                    if (s_stepIndex >= 0)
+                    if (_stepIndex >= 0)
                     {
                         Checkpoint(gap);
                     }
 
                     // 每步一行轻量 trace：进程一旦被杀，最后一行就是死亡位置。
-                    Say($"[probe] tick#{s_stepIndex} {s_stepName} gap={gap}ms live={s_live.Count} ghost={s_ghostVisible}");
+                    Say($"[probe] tick#{_stepIndex} {_stepName} gap={gap}ms live={_live.Count} ghost={_ghostVisible}");
+
+                    // 状态行不每步都刷：150 步里刷 8 次左右，既不至于把 UI 线程
+                    // 钉在重渲染上污染 tick gap，又能在页面上看到进度。
+                    if (_stepIndex % 20 == 0 || _stepIndex == _steps.Count - 1)
+                    {
+                        _setStatus?.Invoke(
+                            $"step {_stepIndex + 1}/{_steps.Count} {_stepName} ｜ live={_live.Count} " +
+                            $"ghost={_ghostVisible} mismatch={_indexMismatch}");
+                    }
 
                     if (!Advance())
                     {
                         Say("[probe] all steps done, writing summary");
-                        timer.Stop();
-                        popup.IsOpen = false;
+                        StopRun();
                         Finish();
                         Say("[probe] summary written");
+                        _setStatus?.Invoke(FinishStatus());
                         return;
                     }
                 }
@@ -217,52 +250,99 @@ namespace UwpApp
                     Say("[probe] TICK EX " + ex);
                 }
             };
-            Say("[probe] steps=" + s_steps.Count + " starting timer");
-            timer.Start();
+            Say("[probe] steps=" + _steps.Count + " starting timer");
+            _timer.Start();
 
-            Say("[probe] begin mode=" + MODE + " items=" + ItemCount);
-            s_log.Event("begin", ("mode", MODE), ("items", ItemCount), ("steps", s_steps.Count));
+            Say("[probe] begin mode=" + Mode + " items=" + ItemCount);
+            _log.Event("begin", ("mode", Mode), ("items", ItemCount), ("steps", _steps.Count));
+        }
+
+        /// <summary>收摊：停 timer、关浮层、摘掉活跃引用。切页、重跑、跑完都走这里。</summary>
+        private void StopRun()
+        {
+            if (_timer is { } timer)
+            {
+                timer.Stop();
+                _timer = null;
+            }
+
+            if (_popup is { } popup)
+            {
+                popup.IsOpen = false;
+                popup.Child = null;
+                _popup = null;
+            }
+
+            if (ReferenceEquals(s_active, this))
+            {
+                s_active = null;
+            }
         }
 
         /// <summary>进程退出/未处理异常的最后一道证据：任何路径都要留下而不是静默。</summary>
-        private static void InstallCrashHooks()
+        /// <remarks>
+        /// 这三个 hook 是<b>进程级</b>的，只能注册一次；lambda 里因此不能捕获 this
+        /// （否则会永久抓住第一个实例，切页后仍在往旧日志里写）。统一走
+        /// <see cref="s_active"/> 转发到当前正在跑的那一轮。
+        /// </remarks>
+        private void InstallCrashHooks()
         {
+            if (s_hooksInstalled)
+            {
+                return;
+            }
+
+            s_hooksInstalled = true;
+
             try
             {
                 AppDomain.CurrentDomain.UnhandledException += (_, e) =>
                 {
                     Say("[probe] UNHANDLED " + e.ExceptionObject);
-                    s_log?.Event("crash",
+                    if (s_active is not { } self)
+                    {
+                        return;
+                    }
+
+                    self._log?.Event("crash",
                         ("kind", "unhandled"),
                         ("fatal", e.IsTerminating),
-                        ("step", s_stepName),
+                        ("step", self._stepName),
                         ("detail", Convert.ToString(e.ExceptionObject) ?? "?"));
-                    s_log?.Flush();
+                    self._log?.Flush();
                 };
 
                 AppDomain.CurrentDomain.ProcessExit += (_, _) =>
                 {
-                    Say("[probe] ProcessExit step=" + s_stepName + " stepIndex=" + s_stepIndex);
-                    s_log?.Event("exit",
+                    Say("[probe] ProcessExit");
+                    if (s_active is not { } self)
+                    {
+                        return;
+                    }
+
+                    self._log?.Event("exit",
                         ("kind", "process-exit"),
                         ("exitCode", Environment.ExitCode),
-                        ("stepIndex", s_stepIndex),
-                        ("step", s_stepName),
-                        ("prepared", s_prepared),
-                        ("clearing", s_clearing),
-                        ("ghost", s_ghostVisible),
-                        ("factory", s_factory?.StatsSnapshot() ?? "n/a"));
-                    s_log?.Flush();
+                        ("stepIndex", self._stepIndex),
+                        ("step", self._stepName),
+                        ("prepared", self._prepared),
+                        ("clearing", self._clearing),
+                        ("ghost", self._ghostVisible),
+                        ("factory", self._factory?.StatsSnapshot() ?? "n/a"));
+                    self._log?.Flush();
                 };
 
                 Windows.UI.Xaml.Application.Current.UnhandledException += (_, e) =>
                 {
                     Say("[probe] APP UNHANDLED " + e.Exception);
-                    s_log?.Event("crash",
-                        ("kind", "app-unhandled"),
-                        ("step", s_stepName),
-                        ("detail", e.Exception?.ToString() ?? "?"));
-                    s_log?.Flush();
+                    if (s_active is { } self)
+                    {
+                        self._log?.Event("crash",
+                            ("kind", "app-unhandled"),
+                            ("step", self._stepName),
+                            ("detail", e.Exception?.ToString() ?? "?"));
+                        self._log?.Flush();
+                    }
 
                     // 标记已处理后 XAML 不会立刻拉闸，有机会看到下一步能不能继续跑。
                     e.Handled = true;
@@ -276,87 +356,87 @@ namespace UwpApp
             }
         }
 
-        private static void BuildSteps()
+        private void BuildSteps()
         {
-            s_steps.Clear();
+            _steps.Clear();
 
             // A 单向滚动
             for (int i = 0; i <= 10; i++)
             {
-                s_steps.Add(($"A{i}", Math.Min(ItemCount - 1, i * 500), null));
+                _steps.Add(($"A{i}", Math.Min(ItemCount - 1, i * 500), null));
             }
 
             // B 往返
             for (int i = 0; i < RoundTrips; i++)
             {
-                s_steps.Add((i % 2 == 0 ? "B-end" : "B-home", i % 2 == 0 ? ItemCount - 1 : 0, null));
+                _steps.Add((i % 2 == 0 ? "B-end" : "B-home", i % 2 == 0 ? ItemCount - 1 : 0, null));
             }
 
             // C 随机跳跃（固定种子，可复现）
             var rng = new Random(20261004);
             for (int i = 0; i < JumpCount; i++)
             {
-                s_steps.Add(($"C{i}", rng.Next(0, ItemCount), null));
+                _steps.Add(($"C{i}", rng.Next(0, ItemCount), null));
             }
 
             // D 重复数据：同一字符串出现在多个 index，验证不能用 Data 反推 Index
             for (int i = 0; i < 5; i++)
             {
-                s_steps.Add(($"D{i}", Math.Min(ItemCount - 1, i * 900),
+                _steps.Add(($"D{i}", Math.Min(ItemCount - 1, i * 900),
                     i == 0 ? (Action)SwitchToDuplicateData : null));
             }
 
             // E 数据源结构变化：应看到 ElementIndexChanged，而不是全部重建
-            s_steps.Add(("E-insert", 0, () => s_items.Insert(0, "INSERTED")));
-            s_steps.Add(("E-remove", 100, () => s_items.RemoveAt(5)));
-            s_steps.Add(("E-move", 200, () => s_items.Move(s_items.Count - 1, 1)));
+            _steps.Add(("E-insert", 0, () => _items.Insert(0, "INSERTED")));
+            _steps.Add(("E-remove", 100, () => _items.RemoveAt(5)));
+            _steps.Add(("E-move", 200, () => _items.Move(_items.Count - 1, 1)));
 
             // F 再完整滚一遍
             for (int i = 0; i <= 10; i++)
             {
-                s_steps.Add(($"F{i}", Math.Min(s_items.Count - 1, i * 500), null));
+                _steps.Add(($"F{i}", Math.Min(_items.Count - 1, i * 500), null));
             }
         }
 
-        private static bool Advance()
+        private bool Advance()
         {
-            s_stepIndex++;
-            if (s_stepIndex >= s_steps.Count)
+            _stepIndex++;
+            if (_stepIndex >= _steps.Count)
             {
                 return false;
             }
 
-            var step = s_steps[s_stepIndex];
-            s_stepName = step.Name;
+            var step = _steps[_stepIndex];
+            _stepName = step.Name;
             step.Mutate?.Invoke();
 
             var sw = Stopwatch.StartNew();
-            s_scroller.ChangeView(null, step.Index * ItemHeight, null);
+            _scroller.ChangeView(null, step.Index * ItemHeight, null);
             sw.Stop();
-            s_changeViewMs.Add(sw.ElapsedMilliseconds);
+            _changeViewMs.Add(sw.ElapsedMilliseconds);
             return true;
         }
 
         // ── 检查点 ────────────────────────────────────────────────────────
 
-        private static void Checkpoint(long gap = 0)
+        private void Checkpoint(long gap = 0)
         {
             // 1) 内容错位：live 元素的文本必须等于当前数据源在该下标上的值
-            foreach (var kv in s_live.ToList())
+            foreach (var kv in _live.ToList())
             {
                 var index = kv.Value.Index;
-                if (index < 0 || index >= s_items.Count)
+                if (index < 0 || index >= _items.Count)
                 {
                     continue;
                 }
 
                 var text = (kv.Key as TextBlock)?.Text ?? string.Empty;
-                var expected = s_items[index];
+                var expected = _items[index];
                 if (!string.Equals(text, expected, StringComparison.Ordinal))
                 {
-                    s_indexMismatch++;
-                    s_ghostRows++;
-                    s_log.Event("mismatch",
+                    _indexMismatch++;
+                    _ghostRows++;
+                    _log.Event("mismatch",
                         ("index", index),
                         ("expected", expected),
                         ("actual", text));
@@ -368,10 +448,10 @@ namespace UwpApp
             //
             //    上一版漏了「已复用」这条过滤：150ms 内被重新 GetElement 取用的元素
             //    会被 Acquire 重新置为 Visible，于是 clearing 全成了 ghost（28536 条假阳性）。
-            //    真正的幽灵行 = 不在 s_live 里 + Visible。
-            foreach (var c in s_cleared)
+            //    真正的幽灵行 = 不在 _live 里 + Visible。
+            foreach (var c in _cleared)
             {
-                if (s_live.ContainsKey(c.El))
+                if (_live.ContainsKey(c.El))
                 {
                     continue; // 已复用：此刻 Visible 是合法的
                 }
@@ -379,89 +459,89 @@ namespace UwpApp
                 if (c.El.Visibility == Visibility.Visible)
                 {
                     // 限流：单次 galleries 可能上千条，全写会把 UI 线程钉在同步文件 IO 上。
-                    if (s_ghostVisible < 20)
+                    if (_ghostVisible < 20)
                     {
-                        s_log.Event("ghost", ("text", c.Text));
+                        _log.Event("ghost", ("text", c.Text));
                     }
 
-                    s_ghostVisible++;
-                    s_ghostRows++;
+                    _ghostVisible++;
+                    _ghostRows++;
                 }
             }
-            s_cleared.Clear();
+            _cleared.Clear();
 
             // 3) 库存守恒 + 池上限
-            if (s_factory is not null)
+            if (_factory is not null)
             {
-                if (!s_factory.ConservationOk)
+                if (!_factory.ConservationOk)
                 {
-                    s_conservationBroken++;
+                    _conservationBroken++;
                 }
 
-                if (s_factory.Pooled > MaxPool)
+                if (_factory.Pooled > MaxPool)
                 {
-                    s_poolOverflow++;
+                    _poolOverflow++;
                 }
             }
 
             if (gap > 0)
             {
-                s_tickGapMs.Add(gap);
+                _tickGapMs.Add(gap);
             }
 
-            s_log.Event("checkpoint",
-                ("step", s_stepName),
+            _log.Event("checkpoint",
+                ("step", _stepName),
                 ("gapMs", gap),
-                ("changeViewMs", s_changeViewMs.Count == 0 ? 0 : s_changeViewMs[^1]),
-                ("prepared", s_prepared),
-                ("clearing", s_clearing),
-                ("indexChanged", s_indexChanged),
-                ("live", s_live.Count),
-                ("nullData", s_nullData),
-                ("indexMismatch", s_indexMismatch),
-                ("ghostVisible", s_ghostVisible),
-                ("factory", s_factory?.StatsSnapshot() ?? "n/a(bare or MODE0)"),
+                ("changeViewMs", _changeViewMs.Count == 0 ? 0 : _changeViewMs[^1]),
+                ("prepared", _prepared),
+                ("clearing", _clearing),
+                ("indexChanged", _indexChanged),
+                ("live", _live.Count),
+                ("nullData", _nullData),
+                ("indexMismatch", _indexMismatch),
+                ("ghostVisible", _ghostVisible),
+                ("factory", _factory?.StatsSnapshot() ?? "n/a(bare or MODE0)"),
                 ("echo", EchoStats.Snapshot()));
 
-            s_log.Flush();
+            _log.Flush();
         }
 
-        private static void Finish()
+        private void Finish()
         {
-            var bare = $"minted={s_mintedBare} reused={s_reusedBare} pool={s_barePool.Count}";
-            var violations = (s_factory?.Violations ?? 0)
-                + s_nullData + s_indexMismatch + s_ghostVisible
-                + s_conservationBroken + s_poolOverflow;
+            var bare = $"minted={_mintedBare} reused={_reusedBare} pool={_barePool.Count}";
+            var violations = (_factory?.Violations ?? 0)
+                + _nullData + _indexMismatch + _ghostVisible
+                + _conservationBroken + _poolOverflow;
 
-            s_log.Event("finish",
-                ("mode", MODE),
-                ("steps", s_steps.Count),
-                ("tickGapMs", Percentiles(s_tickGapMs)),
+            _log.Event("finish",
+                ("mode", Mode),
+                ("steps", _steps.Count),
+                ("tickGapMs", Percentiles(_tickGapMs)),
                 ("changeViewMs", Percentiles()),
                 ("bare", bare),
-                ("factory", s_factory?.StatsSnapshot() ?? "n/a(bare or MODE0)"),
+                ("factory", _factory?.StatsSnapshot() ?? "n/a(bare or MODE0)"),
                 ("echo", EchoStats.Snapshot()));
 
-            s_log.Summary(
-                ("mode", MODE),
-                ("steps", s_steps.Count),
-                ("prepared", s_prepared),
-                ("clearing", s_clearing),
-                ("indexChanged", s_indexChanged),
-                ("nullData", s_nullData),
-                ("duplicateKey", s_duplicateKey),
-                ("indexMismatch", s_indexMismatch),
-                ("ghostRows", s_ghostRows),
-                ("ghostVisible", s_ghostVisible),
-                ("conservationBroken", s_conservationBroken),
-                ("poolOverflow", s_poolOverflow),
-                ("doubleAcquire", s_factory?.DoubleAcquire ?? 0),
-                ("doubleRecycle", s_factory?.DoubleRecycle ?? 0),
-                ("invalidTransition", s_factory?.InvalidTransition ?? 0),
-                ("unknownElement", s_factory?.UnknownElement ?? 0),
-                ("minted", s_factory?.Minted ?? s_mintedBare),
-                ("reuseRate", Math.Round(s_factory?.ReuseRate ?? 0, 3)),
-                ("tickGapMs", Percentiles(s_tickGapMs)),
+            _log.Summary(
+                ("mode", Mode),
+                ("steps", _steps.Count),
+                ("prepared", _prepared),
+                ("clearing", _clearing),
+                ("indexChanged", _indexChanged),
+                ("nullData", _nullData),
+                ("duplicateKey", _duplicateKey),
+                ("indexMismatch", _indexMismatch),
+                ("ghostRows", _ghostRows),
+                ("ghostVisible", _ghostVisible),
+                ("conservationBroken", _conservationBroken),
+                ("poolOverflow", _poolOverflow),
+                ("doubleAcquire", _factory?.DoubleAcquire ?? 0),
+                ("doubleRecycle", _factory?.DoubleRecycle ?? 0),
+                ("invalidTransition", _factory?.InvalidTransition ?? 0),
+                ("unknownElement", _factory?.UnknownElement ?? 0),
+                ("minted", _factory?.Minted ?? _mintedBare),
+                ("reuseRate", Math.Round(_factory?.ReuseRate ?? 0, 3)),
+                ("tickGapMs", Percentiles(_tickGapMs)),
                 ("echoMatched", EchoStats.Matched),
                 ("echoMismatch", EchoStats.Mismatch),
                 ("echoExpired", EchoStats.Expired),
@@ -471,30 +551,44 @@ namespace UwpApp
                 ("PASS", violations == 0 ? "true" : "false"));
         }
 
+        /// <summary>跑完之后页面上的那一行：PASS/FAIL + 关键计数 + 归档目录。</summary>
+        private string FinishStatus()
+        {
+            var violations = (_factory?.Violations ?? 0)
+                + _nullData + _indexMismatch + _ghostVisible
+                + _conservationBroken + _poolOverflow;
+
+            return $"{(violations == 0 ? "PASS" : "FAIL")} violations={violations} ｜ " +
+                   $"prepared={_prepared} clearing={_clearing} indexChanged={_indexChanged} ｜ " +
+                   $"minted={_factory?.Minted ?? _mintedBare} " +
+                   $"reuse={Math.Round(_factory?.ReuseRate ?? 0, 3)} ｜ ghost={_ghostVisible} ｜ " +
+                   $"归档 {_log?.Directory}";
+        }
+
         // ── ItemsRepeater 生命周期事件（下标来源，别再用 Data 反查） ──────────
 
-        private static void WireRepeaterEvents(MuxControls.ItemsRepeater rc)
+        private void WireRepeaterEvents(MuxControls.ItemsRepeater rc)
         {
             rc.ElementPrepared += (_, args) =>
             {
-                s_prepared++;
+                _prepared++;
                 var el = args.Element;
-                s_live[el] = (args.Index, (el as TextBlock)?.Text ?? string.Empty);
+                _live[el] = (args.Index, (el as TextBlock)?.Text ?? string.Empty);
             };
 
             rc.ElementClearing += (_, args) =>
             {
-                s_clearing++;
+                _clearing++;
                 var el = args.Element;
-                s_cleared.Add((el, (el as TextBlock)?.Text ?? string.Empty));
-                s_live.Remove(el);
+                _cleared.Add((el, (el as TextBlock)?.Text ?? string.Empty));
+                _live.Remove(el);
             };
 
             rc.ElementIndexChanged += (_, args) =>
             {
-                s_indexChanged++;
+                _indexChanged++;
                 var el = args.Element;
-                s_live[el] = s_live.TryGetValue(el, out var cur)
+                _live[el] = _live.TryGetValue(el, out var cur)
                     ? (args.NewIndex, cur.Key)
                     : (args.NewIndex, (el as TextBlock)?.Text ?? string.Empty);
             };
@@ -502,14 +596,14 @@ namespace UwpApp
 
         // ── 模板 / 工厂 ────────────────────────────────────────────────────
 
-        private static object BuildTemplate()
+        private object BuildTemplate()
         {
-            if (MODE == 0)
+            if (Mode == 0)
             {
                 return BuildXamlDataTemplate();
             }
 
-            if (MODE == 5)
+            if (Mode == 5)
             {
                 var single = new TextBlock { Text = "SINGLE" };
                 return new NativeElementFactory(
@@ -518,31 +612,31 @@ namespace UwpApp
                     null).ItemTemplate;
             }
 
-            if (MODE is 3 or 4)
+            if (Mode is 3 or 4)
             {
-                // 裸桥自池：MODE 3 不改 Visibility，MODE 4 折叠 —— 幽灵行 A/B
+                // 裸桥自池：Mode 3 不改 Visibility，Mode 4 折叠 —— 幽灵行 A/B
                 return new NativeElementFactory(
                     (data, parent) =>
                     {
                         if (data is null)
                         {
-                            s_nullData++;
+                            _nullData++;
                         }
 
                         TextBlock tb;
-                        if (s_barePool.Count > 0)
+                        if (_barePool.Count > 0)
                         {
-                            tb = (TextBlock)s_barePool.Pop();
-                            s_reusedBare++;
+                            tb = (TextBlock)_barePool.Pop();
+                            _reusedBare++;
                         }
                         else
                         {
                             tb = new TextBlock();
-                            s_mintedBare++;
+                            _mintedBare++;
                         }
 
                         tb.Text = data?.ToString() ?? "null";
-                        if (MODE == 4)
+                        if (Mode == 4)
                         {
                             tb.Visibility = Visibility.Visible;
                         }
@@ -556,27 +650,27 @@ namespace UwpApp
                             return;
                         }
 
-                        s_cleared.Add((element, (element as TextBlock)?.Text ?? string.Empty));
-                        if (MODE == 4)
+                        _cleared.Add((element, (element as TextBlock)?.Text ?? string.Empty));
+                        if (Mode == 4)
                         {
                             element.Visibility = Visibility.Collapsed;
                         }
 
-                        if (s_barePool.Count < MaxPool)
+                        if (_barePool.Count < MaxPool)
                         {
-                            s_barePool.Push(element);
+                            _barePool.Push(element);
                         }
                     },
                     null).ItemTemplate;
             }
 
-            s_factory = new RecyclingElementFactory(
+            _factory = new RecyclingElementFactory(
                 create: () => new TextBlock(),
                 bind: (container, data, parent) =>
                 {
                     if (data is null)
                     {
-                        s_nullData++;
+                        _nullData++;
                     }
 
                     if (container is TextBlock tb)
@@ -584,15 +678,15 @@ namespace UwpApp
                         tb.Text = data?.ToString() ?? "null";
                     }
                 },
-                maxPool: MODE == 2 ? 0 : MaxPool,
+                maxPool: Mode == 2 ? 0 : MaxPool,
                 logPath: null)
             {
                 CollapseOnRecycle = true,
             };
-            return s_factory.ItemTemplate;
+            return _factory.ItemTemplate;
         }
 
-        private static void SwitchToDuplicateData()
+        private void SwitchToDuplicateData()
         {
             var dup = new List<string>();
             for (int i = 0; i < ItemCount; i++)
@@ -600,17 +694,17 @@ namespace UwpApp
                 dup.Add(Key(i % 7));
             }
 
-            s_duplicateKey = ItemCount;
-            s_items.Clear();
+            _duplicateKey = ItemCount;
+            _items.Clear();
             foreach (var d in dup)
             {
-                s_items.Add(d);
+                _items.Add(d);
             }
         }
 
-        private static string Key(int i) => "Row-" + i.ToString("D4", CultureInfo.InvariantCulture);
+        private string Key(int i) => "Row-" + i.ToString("D4", CultureInfo.InvariantCulture);
 
-        private static string Percentiles(List<long> values)
+        private string Percentiles(List<long> values)
         {
             if (values.Count == 0)
             {
@@ -622,9 +716,9 @@ namespace UwpApp
             return $"p50={P(0.5)} p95={P(0.95)} p99={P(0.99)} max={sorted[^1]} n={sorted.Count}";
         }
 
-        private static string Percentiles() => Percentiles(s_changeViewMs);
+        private string Percentiles() => Percentiles(_changeViewMs);
 
-        private static Windows.UI.Xaml.DataTemplate BuildXamlDataTemplate()
+        private Windows.UI.Xaml.DataTemplate BuildXamlDataTemplate()
         {
             const string xaml =
                 "<DataTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation'>" +
@@ -648,7 +742,19 @@ namespace UwpApp
             /// <summary>本轮归档目录。</summary>
             public string Directory => _dir;
 
-            public RunLog(int mode, int itemCount)
+            /// <summary>
+            /// 参数从外层实例显式传进来：嵌套类不持有外层 this，
+            /// 而 ItemHeight/TickMs 这些现在是实例属性而不是 const 了。
+            /// </summary>
+            public RunLog(
+                int mode,
+                int itemCount,
+                double itemHeight,
+                int tickMs,
+                int maxPool,
+                int roundTrips,
+                int jumpCount,
+                bool collapseOnRecycle)
             {
                 _runId = $"{DateTime.Now:yyyyMMdd-HHmmss}_m{mode}";
                 var root = Windows.Storage.ApplicationData.Current.LocalFolder.Path;
@@ -659,13 +765,13 @@ namespace UwpApp
                     ("runId", _runId),
                     ("mode", mode),
                     ("itemCount", itemCount),
-                    ("itemHeight", ItemHeight),
-                    ("tickMs", TickMs),
-                    ("maxPool", MaxPool),
+                    ("itemHeight", itemHeight),
+                    ("tickMs", tickMs),
+                    ("maxPool", maxPool),
                     ("layout", "StackLayout"),
-                    ("collapseOnRecycle", MODE is 1 or 2 or 4),
-                    ("roundTrips", RoundTrips),
-                    ("jumpCount", JumpCount),
+                    ("collapseOnRecycle", collapseOnRecycle),
+                    ("roundTrips", roundTrips),
+                    ("jumpCount", jumpCount),
                     ("osVersion", Environment.OSVersion.VersionString),
                     ("startedAt", DateTime.Now.ToString("o", CultureInfo.InvariantCulture)));
 
@@ -734,7 +840,7 @@ namespace UwpApp
                 }
             }
 
-            private static string Json(params (string Key, object Value)[] fields) =>
+            private string Json(params (string Key, object Value)[] fields) =>
                 "{" + string.Join(",", fields.Select(f =>
                     "\"" + f.Key + "\":" + (f.Value is string s
                         ? "\"" + s.Replace("\\", "\\\\").Replace("\"", "'") + "\""

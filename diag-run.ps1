@@ -3,9 +3,12 @@
 # 包 GUID 会随部署轮换，所以不写死 PackageFamilyName：
 # 直接扫 %LOCALAPPDATA%\Packages 找带 LocalState\ReactorRuns 的那个包目录。
 #
-# 用法：.\diag-run.ps1 [-Mode 0|1|2|3|4|5]
-#   Mode 缺省 = 不改，沿用 App 里上一次读到的（首次跑为 3）。
-#   探针启动时读 LocalState\probe-mode.txt，所以切模式不用重新编译。
+# 用法：.\diag-run.ps1 [-Mode N]
+#   N = 测试壳菜单项下标：0~5 是压测 M0~M5，6 虚拟列表实验室，7 Echo 实验室，
+#       8 CoreLoop 回归，9 元素画廊……（见 UwpApp\TestShell.cs 的 Cases 顺序）
+#   Mode 缺省 = 不改，沿用 App 上一次读到的（首次跑为 1，即 M1）。
+#   App 启动时读 LocalState\probe-mode.txt 决定落在哪一页，所以换页不用重新编译；
+#   真人测试时直接点左侧菜单切换即可，这个参数只是给无人值守脚本用的。
 param([int]$Mode = -1)
 $ErrorActionPreference = 'Continue'
 $proj = 'D:\fluentapps\repos\test\ReactorForUWP\UwpApp\UwpApp.csproj'
