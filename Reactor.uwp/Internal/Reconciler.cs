@@ -901,9 +901,9 @@ internal sealed class Reconciler
     {
         if (native is Border wrapper && _componentNodes.TryGetValue(wrapper, out var node))
         {
-            // UnmountNative 会把 node 从注册表摘掉，先留住它当前渲染的 element。
+            // UnmountNode 会把 node 从注册表摘掉，先留住它当前渲染的 element。
             var child = node.CurrentElement;
-            UnmountNative(native, element ?? EmptyElement.Instance);
+            UnmountNode(native, element ?? EmptyElement.Instance);
             if (wrapper.Child is UIElement componentChild)
             {
                 UnmountTree(componentChild, child);
@@ -912,7 +912,7 @@ internal sealed class Reconciler
             return;
         }
 
-        UnmountNative(native, element ?? EmptyElement.Instance);
+        UnmountNode(native, element ?? EmptyElement.Instance);
 
         if (element is null)
         {
@@ -953,8 +953,22 @@ internal sealed class Reconciler
     private static IElementHandler? FindHandler(Element element) =>
         ElementHandlerRegistry.TryGet(element.GetType(), out var handler) ? handler : null;
 
-    /// <summary>卸载原生控件：解绑事件、清理组件节点。</summary>
-    internal void UnmountNative(UIElement native, Element element)
+    /// <summary>
+    /// 卸载一棵原生子树（<b>递归</b>）：解绑事件、跑组件 cleanup、摘掉组件节点。
+    /// 这是"丢弃一棵树"的<b>唯一入口</b>。
+    /// </summary>
+    /// <remarks>
+    /// 早期版本这里只处理根节点（现在的 <see cref="UnmountNode"/>），
+    /// 而递归版 <see cref="UnmountTree"/> 虽然早就写好却<b>没有任何调用方</b>，
+    /// 于是每次替换子树，子树里的控件全部留在协调器的事件表里、
+    /// 嵌套组件的 <c>ComponentNode</c> 也永不回收——
+    /// 表现就是"反复切页内存一直涨"（Frame 换页、列表换项、组件换分支都会命中）。
+    /// 现在对外只暴露这一层，调用方不用再区分卸载深度。
+    /// </remarks>
+    internal void UnmountNative(UIElement native, Element element) => UnmountTree(native, element);
+
+    /// <summary>只卸载<b>这一个</b>节点（不递归）：由 <see cref="UnmountTree"/> 逐层调用。</summary>
+    private void UnmountNode(UIElement native, Element element)
     {
         if (native is Border wrapper && _componentNodes.TryGetValue(wrapper, out var node))
         {

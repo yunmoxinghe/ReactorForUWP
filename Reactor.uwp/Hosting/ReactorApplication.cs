@@ -260,23 +260,86 @@ public abstract partial class ReactorApplication : WindowsUIApplication,
         try
         {
             _rootFrame = root;
-            var coreTitleBar = CoreApplication.GetCurrentView().TitleBar;
-            coreTitleBar.ExtendViewIntoTitleBar = true;
 
-            // 必须同时把标题栏按钮刷成透明，否则三个胶囊按钮是不透明色块。
-            var titleBar = Windows.UI.ViewManagement.ApplicationView.GetForCurrentView().TitleBar;
-            titleBar.ButtonBackgroundColor = Colors.Transparent;
-            titleBar.ButtonInactiveBackgroundColor = Colors.Transparent;
+            CustomizeTitleBar();
 
             // Frame 的模板把 Padding 绑到 ContentPresenter，
             // 所以顶栏高度走 Padding：材质仍然铺满整窗，内容被压到标题栏下面。
             UpdateTitleBarPadding();
-            coreTitleBar.LayoutMetricsChanged += (_, _) => UpdateTitleBarPadding();
+            CoreApplication.GetCurrentView().TitleBar.LayoutMetricsChanged +=
+                (_, _) => UpdateTitleBarPadding();
         }
         catch (Exception ex)
         {
             Trace("ExtendIntoTitleBar failed: " + ex.Message);
         }
+    }
+
+    /// <summary>
+    /// 标题栏延伸到客户区 + 三个胶囊按钮的配色（对齐模板的
+    /// <c>AppThemeManager.CustomizeTitleBar</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 只把按钮<b>背景</b>刷成透明是不够的：前景色还是系统默认的深色，
+    /// 应用切到深色主题后就是"深字压深底"，三个按钮几乎看不见。
+    /// 所以前景 / 失焦前景 / 悬停 / 按下都要按当前明暗重设——
+    /// 主题切换时由 <see cref="ReactorHost"/> 的 <c>ActualThemeChanged</c> 重新调用。
+    /// </remarks>
+    internal static void CustomizeTitleBar()
+    {
+        try
+        {
+            CoreApplication.GetCurrentView().TitleBar.ExtendViewIntoTitleBar = true;
+
+            var titleBar = Windows.UI.ViewManagement.ApplicationView.GetForCurrentView().TitleBar;
+
+            // 必须把按钮背景刷成透明，否则三个胶囊按钮是不透明色块。
+            titleBar.ButtonBackgroundColor = Colors.Transparent;
+            titleBar.ButtonInactiveBackgroundColor = Colors.Transparent;
+
+            var dark = IsDarkTheme();
+            var foreground = dark ? Colors.White : Colors.Black;
+
+            // 失焦按钮用不透明灰（与 WinUI 3 模板一致，比"半透明前景"稳定）。
+            var inactiveForeground = dark
+                ? Color.FromArgb(255, 128, 128, 128)
+                : Color.FromArgb(255, 160, 160, 160);
+
+            var hoverBackground = dark
+                ? Color.FromArgb(20, 255, 255, 255)
+                : Color.FromArgb(20, 0, 0, 0);
+
+            titleBar.ButtonForegroundColor = foreground;
+            titleBar.ButtonInactiveForegroundColor = inactiveForeground;
+            titleBar.ButtonHoverBackgroundColor = hoverBackground;
+            titleBar.ButtonHoverForegroundColor = foreground;
+            titleBar.ButtonPressedBackgroundColor =
+                Color.FromArgb(30, hoverBackground.R, hoverBackground.G, hoverBackground.B);
+            titleBar.ButtonPressedForegroundColor = foreground;
+        }
+        catch (Exception ex)
+        {
+            Trace("CustomizeTitleBar failed: " + ex.Message);
+        }
+    }
+
+    /// <summary>与 <see cref="ReactorHost"/> 里那份同序的明暗判定（这份是静态的）。</summary>
+    private static bool IsDarkTheme()
+    {
+        var theme = _rootFrame?.ActualTheme ?? ElementTheme.Default;
+        if (theme == ElementTheme.Default)
+        {
+            theme = _rootFrame?.RequestedTheme ?? ElementTheme.Default;
+        }
+
+        if (theme == ElementTheme.Default)
+        {
+            theme = WindowsUIApplication.Current.RequestedTheme == ApplicationTheme.Dark
+                ? ElementTheme.Dark
+                : ElementTheme.Light;
+        }
+
+        return theme == ElementTheme.Dark;
     }
 
     /// <summary>

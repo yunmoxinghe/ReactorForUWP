@@ -118,10 +118,28 @@ public static class StyleSheet
     private static readonly Dictionary<string, Lazy<Style>> Definitions = new(StringComparer.Ordinal);
 
     /// <summary>定义一个自定义命名样式。重复定义同一键以先定义者为准（对齐官方 first-wins）。</summary>
+    /// <remarks>
+    /// <b>必须是 first-wins，不能覆盖。</b>页面组件通常在 <c>Render()</c> 里调
+    /// <c>DefineStyles()</c>，也就是<b>每次重渲染都会跑一遍</b>；若允许覆盖，
+    /// 每轮都会产出一个新的 <see cref="Style"/> 实例，而协调器是用
+    /// <c>ReferenceEquals</c> 判断样式有没有变的——于是每轮都判定"变了"并重新赋值，
+    /// 后果是<b>控件模板被反复重建</b>：
+    /// <list type="bullet">
+    /// <item>切主题时模板重建与 XAML 的主题资源刷新叠在一起，直接卡死；</item>
+    /// <item>模板里的 <c>ElementSoundMode</c> 绑定每次都从头绑一遍，
+    ///       控件声音的表现与 XAML 版（样式只定义一次、模板稳定）对不上。</item>
+    /// </list>
+    /// 对应到 XAML：样式写在 <c>App.xaml</c> 里，整个进程就解析一次。
+    /// </remarks>
     public static void Define(string key, Action<StyleBuilder> build)
     {
         if (string.IsNullOrWhiteSpace(key)) throw new ArgumentException("样式键不能为空", nameof(key));
         if (build is null) throw new ArgumentNullException(nameof(build));
+
+        if (Definitions.ContainsKey(key))
+        {
+            return;
+        }
 
         // Lazy：真正的构建推迟到首次使用，此时应用资源字典（BasedOn 目标）一定已就绪。
         Definitions[key] = new Lazy<Style>(() =>
