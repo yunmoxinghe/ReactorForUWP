@@ -12,6 +12,10 @@ obj/
 AppPackages/
 BundleArtifacts/
 
+# dotnet pack 的输出目录（publish.yml 用 -o artifacts，只在 CI 里当 artifact 上传）
+# 注意 *.nupkg 那条匹配不到 .snupkg，符号包会漏网，所以整个目录排掉
+artifacts/
+
 # 用户级 / IDE 配置文件
 *.user
 *.suo

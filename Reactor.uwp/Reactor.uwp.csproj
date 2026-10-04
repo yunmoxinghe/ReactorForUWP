@@ -31,7 +31,10 @@
     <PackageId>Reactor.Uwp</PackageId>
     <!-- alpha.4 起包里带 runtimes\win-arm64\native\Reactor.Uwp.Native.dll
          （与 win-x64 并列），示例的 Platforms 因此能写 x64;arm64。 -->
-    <PackageVersion>0.1.0-alpha.4</PackageVersion>
+    <!-- alpha.5：重渲染批处理补上死循环保护（连续 50 轮自触发即抛），
+         本地化切语言链路修好，RenderBatcher / Reorder 有回归测试兜底。
+         注意 alpha.5 起 setState 语义与官方对齐（不再同步生效）。 -->
+    <PackageVersion>0.1.0-alpha.5</PackageVersion>
     <Authors>云漠星</Authors>
     <Copyright>Copyright © 2026 云漠星</Copyright>
     <Description>UWP + WinUI 2 的声明式 UI 框架：用 C# 描述界面，不写 XAML。映射 WinUI 2 控件（不是内置控件树），带自实现的虚拟列表与 ItemsRepeater 原生工厂桥。</Description>
