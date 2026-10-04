@@ -2,7 +2,7 @@ using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using static Microsoft.UI.Reactor.Factories;
 
-namespace Reactor.Samples.Pages;
+namespace Reactor.Gallery.Pages;
 
 /// <summary>
 /// 设置页：SettingsCard / SettingsExpander / Expander / ContentDialog。

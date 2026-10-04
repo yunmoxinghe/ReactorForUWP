@@ -7,16 +7,14 @@
     <UseUwp>true</UseUwp>
 
     <!-- 只留 x64：Reactor.Uwp 的原生桥（给 ItemsRepeater 补的 IElementFactory）
-         目前只有 win-x64 预编译产物，其它架构下自定义工厂不可用。
-         示例不打算演示"半可用"状态，所以不列 x86/arm64。 -->
+         目前只有 win-x64 预编译产物。等其它架构补上再放开 Platforms。 -->
     <Platforms>x64</Platforms>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <DefaultLanguage>zh-CN</DefaultLanguage>
 
-    <!-- AOT：UWP + net10 的 AOT 走的是平台自带的编译链，不需要额外装什么东西；
-         开它才能暴露"用了反射 / 运行时代码生成"的写法（示例里没用，是干净的）。
-         DisableRuntimeMarshalling 与框架工程保持一致：WinRT 互操作由
-         CsWinRT 生成的封送代码负责，运行时封送开着只会拖慢调用。 -->
+    <!-- AOT 默认开着：UWP + net10 的 AOT 用的是平台自带编译链，不额外依赖什么，
+         而且它能第一时间暴露"反射 / 运行时代码生成"这类在 AOT 下会炸的写法。
+         真需要反射时加 rd.xml 或 [DynamicallyAccessedMembers]，别直接关掉它。 -->
     <PublishAot>true</PublishAot>
     <PublishProfile>win-$(Platform).pubxml</PublishProfile>
     <DisableRuntimeMarshalling>true</DisableRuntimeMarshalling>
@@ -24,9 +22,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- 示例的关键点：装 NuGet 包，不引用仓库里的框架源码。
-         这样示例编译通过 = 包里的公共 API 真够用（源码引用会掩盖导出问题）。
-         升级用法：改这里的 Version。 -->
+    <!-- 新项目的起点：装包，然后把 App.cs / MainPage.cs 改成自己的。 -->
     <PackageReference Include="Reactor.Uwp" Version="0.1.0-alpha.2" />
   </ItemGroup>
 </Project>

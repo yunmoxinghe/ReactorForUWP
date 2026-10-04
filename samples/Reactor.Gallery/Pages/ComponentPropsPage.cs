@@ -2,7 +2,7 @@ using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using static Microsoft.UI.Reactor.Factories;
 
-namespace Reactor.Samples.Pages;
+namespace Reactor.Gallery.Pages;
 
 /// <summary>子组件的 props：record 即可，框架按结构相等判断要不要重渲染。</summary>
 public sealed record GreetingProps(string Name, int Times);

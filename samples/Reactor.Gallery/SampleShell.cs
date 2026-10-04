@@ -1,10 +1,10 @@
 using System;
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
-using Reactor.Samples.Pages;
+using Reactor.Gallery.Pages;
 using static Microsoft.UI.Reactor.Factories;
 
-namespace Reactor.Samples;
+namespace Reactor.Gallery;
 
 /// <summary>
 /// 示例外壳：左边是示例清单，右边是 <c>Frame</c>，点一下就切页。

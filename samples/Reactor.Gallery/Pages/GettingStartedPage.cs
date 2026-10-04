@@ -4,7 +4,7 @@ using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using static Microsoft.UI.Reactor.Factories;
 
-namespace Reactor.Samples.Pages;
+namespace Reactor.Gallery.Pages;
 
 /// <summary>
 /// 最小可运行示例：状态、事件、条件渲染。

@@ -5,7 +5,7 @@ using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using static Microsoft.UI.Reactor.Factories;
 
-namespace Reactor.Samples.Pages;
+namespace Reactor.Gallery.Pages;
 
 /// <summary>
 /// 长列表虚拟化：5000 项，只为可视区（外加上下缓冲）创建真实控件。

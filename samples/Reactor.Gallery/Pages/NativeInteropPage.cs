@@ -5,7 +5,7 @@ using Windows.UI.Xaml;
 using MuxControls = Microsoft.UI.Xaml.Controls;
 using static Microsoft.UI.Reactor.Factories;
 
-namespace Reactor.Samples.Pages;
+namespace Reactor.Gallery.Pages;
 
 /// <summary>
 /// 逃生舱 <c>Native()</c>：把一棵真实原生控件树挂进 Reactor 布局。

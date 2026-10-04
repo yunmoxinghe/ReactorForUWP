@@ -2,7 +2,7 @@ using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using static Microsoft.UI.Reactor.Factories;
 
-namespace Reactor.Samples.Pages;
+namespace Reactor.Gallery.Pages;
 
 /// <summary>
 /// 输入类元素：TextBox / ComboBox / ToggleSwitch / CheckBox / Slider / RadioButtons。

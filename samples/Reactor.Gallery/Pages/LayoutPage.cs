@@ -4,7 +4,7 @@ using Windows.UI;
 using Windows.UI.Xaml.Media;
 using static Microsoft.UI.Reactor.Factories;
 
-namespace Reactor.Samples.Pages;
+namespace Reactor.Gallery.Pages;
 
 /// <summary>
 /// 布局：Grid / Border / Stack 间距 / 对齐。

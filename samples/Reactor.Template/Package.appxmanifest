@@ -6,15 +6,17 @@
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
   IgnorableNamespaces="uap mp">
 
+  <!-- 新项目必改两处：Name 换成自己的 GUID，Publisher 换成自己的证书主题
+       （VS 首次部署会生成测试证书，主题要与这里一致）。 -->
   <Identity
-    Name="E362DB2E-EDAD-4411-B1F6-6355F8CFB661"
+    Name="21CE1A0C-1D93-4A28-AE85-B632189C9236"
     Publisher="CN=yunmoxing"
     Version="1.0.0.0" />
 
-  <mp:PhoneIdentity PhoneProductId="E362DB2E-EDAD-4411-B1F6-6355F8CFB661" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
+  <mp:PhoneIdentity PhoneProductId="21CE1A0C-1D93-4A28-AE85-B632189C9236" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
   <Properties>
-    <DisplayName>Reactor Samples</DisplayName>
+    <DisplayName>Reactor Template</DisplayName>
     <PublisherDisplayName>yunmoxing</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
@@ -31,12 +33,12 @@
   <Applications>
     <Application Id="App"
       Executable="$targetnametoken$.exe"
-      EntryPoint="Reactor.Gallery.App">
+      EntryPoint="Reactor.Template.App">
       <uap:VisualElements
-        DisplayName="Reactor Samples"
+        DisplayName="Reactor Template"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png"
-        Description="Reactor.Uwp 示例集"
+        Description="Reactor.Uwp 项目模板"
         BackgroundColor="transparent">
         <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png"/>
         <uap:SplashScreen Image="Assets\SplashScreen.png" />
