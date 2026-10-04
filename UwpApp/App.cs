@@ -8,7 +8,7 @@ namespace UwpApp;
 // 纯 C# 入口：manifest 的 EntryPoint="UwpApp.App" 激活这个无 XAML 的类，
 // WinUI 2 引导与窗口挂载全部由 ReactorApplication<TRoot> 完成。
 // 没有 App.xaml 就没有 XAML 编译器生成的 Main，这里手写等价入口。
-public sealed partial class App : ReactorApplication<BlankTemplateApp>
+public sealed partial class App : ReactorApplication<__FactoryRuntimeProbeApp> // TEMP: A/B 压测，跑完还原 BlankTemplateApp
 {
     // 等价于经典 UWP App.g.cs 中生成的入口：启动 XAML 框架并创建 Application 实例，
     // 随后系统回调 OnLaunched。
