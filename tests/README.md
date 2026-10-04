@@ -29,6 +29,7 @@ dotnet run --project tests/Reactor.Core.Tests -c Release
 | `EchoGuardTests.cs` | 受控属性：自己写值引发的回声不能被当成用户输入 |
 | `VirtualListTests.cs` | 虚拟化身份模型 **key ≠ index**（头部插入后已挂载项不拿错内容） |
 | `BreadcrumbTemplateTests.cs` | 面包屑 `ItemTemplate` 的 XAML 文本：只喂数据（喂 UIElement 会 0x800F1000）、样式键转义 |
+| `WeakTableTests.cs` | handler 静态状态必须是**弱键**：控件不可达就能被 GC 回收（`Unmount` 漏写也不泄漏） |
 
 **往这一层加用例的前提**：被测代码不碰 `Windows.UI.Xaml`。碰了就抽——
 把纯逻辑那一段单独成文件（像 `Internal/BreadcrumbTemplate.cs` 那样），
@@ -49,14 +50,13 @@ handler 和用例都引用它。这样"改一行跑一次"的反馈速度才能�
 | 8 | CoreLoop 回归 | 渲染循环 |
 | 9~12 | 元素画廊 / A4 演示 / CoreLoop 演示 / Blank 模板页 | 观感与写法 |
 | 13 | XAML/代码 控件对照 | **对齐用**：同一控件在 XAML 与代码里的一致性 |
-| 14 | 面包屑 ItemsSource 探针 | 喂集合的几种写法（mode 5 是崩的那版，留作反例） |
-| 15~16 | M1 / M0 慢滚对照 | 判定"快速滚动闪烁"是不是大跨步所致 |
-| 17 | 设置页复现 | 冷启动自动进设置页，验整条路径不崩 |
+| 14~15 | M1 / M0 慢滚对照 | 判定"快速滚动闪烁"是不是大跨步所致 |
+| 16 | 设置页复现 | 冷启动自动进设置页，验整条路径不崩 |
 
 无人值守跑一轮（构建 → 同步产物 → 启动 → 等本轮跑完 → 打印 summary）：
 
 ```powershell
-.\diag-run.ps1 -Mode 17
+.\diag-run.ps1 -Mode 16
 ```
 
 每轮的 `manifest / config / events.ndjson / summary.json` 归档在
@@ -66,5 +66,6 @@ handler 和用例都引用它。这样"改一行跑一次"的反馈速度才能�
 
 - **新 bug 先补第 1 层的用例**（能脱离 XAML 的部分），补不了才在第 2 层加菜单页
 - 第 2 层每加一个菜单项，`diag-run.ps1` 的 Mode 表要跟着更新
-- 探针类文件（`UwpApp/__*Probe.cs`）是诊断用的，**不是产品代码**，但也别删——
-  它们是"为什么这么写"的实证，注释里都写了结论
+- 第 2 层里名字带 Probe 的页（`XamlDiffProbe` / `SettingsNavProbe` / `FactoryProbePage`）
+  是**测试资产**，不是产品代码：它们是"为什么这么写"的实证，注释里都写了结论。
+  一次性定位用的东西（比如某个 bug 的二分探针）结论写进代码注释后就可以删

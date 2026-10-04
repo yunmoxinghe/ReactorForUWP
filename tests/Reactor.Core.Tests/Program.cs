@@ -24,6 +24,7 @@ internal static class Program
         EchoGuardTests.Run();
         VirtualListTests.Run();
         BreadcrumbTemplateTests.Run();
+        WeakTableTests.Run();
 
         Console.WriteLine();
         Console.WriteLine(new string('-', 60));
