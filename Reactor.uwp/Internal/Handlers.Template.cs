@@ -201,124 +201,245 @@ internal sealed class BitmapIconHandler : ElementHandler<BitmapIconElement, Bitm
 }
 
 /// <summary>
-/// 面包屑导航。
+/// 面包屑：映射 WinUI 2 原生 <c>BreadcrumbBar</c>——与参考模板 <c>MainPage.xaml</c>
+/// 里的 <c>&lt;controls:BreadcrumbBar&gt;</c> 是同一个控件。
 /// </summary>
 /// <remarks>
-/// <b>不使用 WinUI 2 的原生 BreadcrumbBar</b>——实测踩坑链如下，留档避免重犯：
-/// <list type="number">
-/// <item><c>List&lt;string&gt;</c> 直接赋 <c>ItemsSource</c>：赋值当场抛
-/// “Argument 'source' is not a supported vector.”（WinRT 侧要的是
-/// <c>IVector&lt;IInspectable&gt;</c>，<c>List&lt;string&gt;</c> 投影成的是
-/// <c>IVector&lt;HSTRING&gt;</c>）。</item>
-/// <item>换成 <c>ObservableCollection&lt;object&gt;</c> 后<b>赋值不再报错</b>，
-/// 但 CsWinRT 给托管集合建的 CCW 过不了布局期的 <c>ItemsSourceView</c>：
-/// 面包屑从 <c>Collapsed</c> 变 <c>Visible</c>、第一次真正参与 Measure 时才炸，
-/// 抛的是没有托管堆栈的 COMException“未指定的错误”，并且进程 fast-fail
-/// （退出码 <c>0xC000027B</c>），<c>Application.UnhandledException</c> 里
-/// <c>e.Handled = true</c> 也拦不住。</item>
-/// </list>
-/// 结论：这条 ABI 路径在本机不可用，宁可不碰。这里自建横向
-/// <see cref="StackPanel"/>（文本 + “›” 分隔符 + 可点击），视觉与默认
-/// BreadcrumbBar 一致，且不会因为集合投影把整个 App 带走。
+/// 分隔符（chevron）、条目按钮、点击反馈、键盘导航、自动化对等全部由官方模板提供，
+/// 这里只负责喂 <c>ItemsSource</c>、定条目外观、接 <c>ItemClicked</c>。
+/// <para>
+/// <b>喂集合走"借真原生向量"</b>：直接给 <c>ItemsSource</c> 赋托管集合，在 AOT 下
+/// 过不了布局期的 <c>ItemsSourceView</c>（CsWinRT 建的 CCW 被拒 → 不带托管堆栈的
+/// COMException → fast-fail 0xC000027B，<c>Application.UnhandledException</c>
+/// 都拦不住）；<c>List&lt;string&gt;</c> 更是直接被拒（"not a supported vector"——
+/// 它被投影成 <c>IVector&lt;HSTRING&gt;</c>）。而 <c>ItemsControl.Items</c> 是
+/// WinRT 自己的 <c>IObservableVector&lt;IInspectable&gt;</c>，<b>实测可用</b>：
+/// 依据 <c>UwpApp/__BreadcrumbProbe.cs</c> 的 mode=3——赋值 OK、布局 OK、
+/// 生成 4 个 <c>BreadcrumbBarItem</c>。载体 <c>ItemsControl</c> 不进可视树，
+/// 只当向量使。
+/// </para>
+/// <para>
+/// <b>喂进向量的必须是"数据"，不能是 <c>UIElement</c>（实测必崩，别再试）。</b>
+/// 之前为了让每条带上 <c>TitleTextBlockStyle</c>，把每项换成了 <c>TextBlock</c>：
+/// 第一次布局就 <c>COMException 0x800F1000 —— "Element is already the child of
+/// another element."</c>（probe mode=5）。原因是 <c>ItemsControl.Items.Add</c>
+/// 已经给那个 TextBlock 置了父，<c>ItemsRepeater</c> 再把它挂进自己的 panel 就是
+/// 第二个父——UWP 里 <c>UIElement</c> 天生要占树上一个位置，它当不了数据。
+/// </para>
+/// <para>
+/// <b>条目外观一律走官方的 <c>ItemTemplate</c></b>：<c>BreadcrumbBar</c> 没有
+/// <c>ItemStyle</c>（winmd 里查过，只有 <c>ItemTemplate</c> /
+/// <c>ItemTemplateSelector</c>），而 <c>BreadcrumbBarItem</c> 的默认样式硬设了
+/// <c>FontSize = {ThemeResource BreadcrumbBarItemThemeFontSize}</c>，
+/// 继承链到条目就断——在 bar 上设多大字号都不生效。
+/// 纯代码没有 <c>FrameworkElementFactory</c>，唯一的正路是
+/// <c>XamlReader.Load</c> 一段 DataTemplate（<b>AOT 下实测可用</b>，见 probe
+/// mode=7：条目 TextBlock 的 <c>FontSize</c>=28、<c>Style</c>=有）。
+/// Load 出来的独立树没有父链，但 <c>{StaticResource}</c> 仍能落到 Application 级资源，
+/// 所以 <c>Style="{StaticResource TitleTextBlockStyle}"</c> 照 XAML 原样写即可。
+/// </para>
 /// </remarks>
-internal sealed class BreadcrumbBarHandler : ElementHandler<BreadcrumbBarElement, StackPanel>
+internal sealed class BreadcrumbBarHandler
+    : ElementHandler<BreadcrumbBarElement, MuxControls.BreadcrumbBar>
 {
-    private static readonly Dictionary<StackPanel, Action<int>?> Callbacks = new();
+    private static readonly Dictionary<MuxControls.BreadcrumbBar, Action<int>?> Callbacks = new();
 
-    /// <summary>元素在栈里的顺序稳定，直接按索引回传（与 BreadcrumbBar.ItemClicked 一致）。</summary>
-    protected override StackPanel Mount(Reconciler reconciler, BreadcrumbBarElement element)
+    /// <summary>每个控件的向量载体：只为拿到一个真 WinRT 向量喂 ItemsSource。</summary>
+    private static readonly Dictionary<MuxControls.BreadcrumbBar, ItemsControl> Carriers = new();
+
+    /// <summary>
+    /// 查不到资源的样式键。存下来是为了别每帧重复 Load 同一个必然失败的字符串
+    /// （那会刷满日志）——找不到一次就够了。
+    /// </summary>
+    private static readonly HashSet<string> UnresolvedStyles = new();
+
+    /// <summary>
+    /// <c>DataTemplate</c> 缓存：键是"样式名 + 字号"。
+    /// <c>XamlReader.Load</c> 是运行时整段解析 XAML，每次渲染都跑一遍太贵；
+    /// 同一个模板实例喂给多个 <c>ItemsRepeater</c> 是允许的，按内容缓存即可。
+    /// </summary>
+    private static readonly Dictionary<string, Windows.UI.Xaml.DataTemplate> Templates = new();
+
+    protected override MuxControls.BreadcrumbBar Mount(
+        Reconciler reconciler, BreadcrumbBarElement element)
     {
-        var panel = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
+        var bar = new MuxControls.BreadcrumbBar();
 
-        Callbacks[panel] = element.OnItemClicked;
-        Fill(panel, element);
-        return panel;
+        var carrier = new ItemsControl();
+        Carriers[bar] = carrier;
+        SyncItems(carrier.Items, element);
+
+        bar.ItemsSource = carrier.Items;
+
+        if (ResolveItemTemplate(element) is { } template)
+        {
+            bar.ItemTemplate = template;
+        }
+
+        Callbacks[bar] = element.OnItemClicked;
+        bar.ItemClicked += OnItemClicked;
+
+        return bar;
     }
 
     protected override void Update(
         Reconciler reconciler,
         BreadcrumbBarElement oldElement,
         BreadcrumbBarElement newElement,
-        StackPanel control)
+        MuxControls.BreadcrumbBar control)
     {
         Callbacks[control] = newElement.OnItemClicked;
 
-        // 条目、样式、字号任一变化都要重排文本（字号/样式变了只改属性会漏掉新项）。
-        if (ItemsChanged(oldElement.Items, newElement.Items) ||
-            oldElement.ItemFontSize != newElement.ItemFontSize ||
-            oldElement.ItemStyleKey != newElement.ItemStyleKey)
+        if (Carriers.TryGetValue(control, out var carrier))
         {
-            Fill(control, newElement);
+            SyncItems(carrier.Items, newElement);
+        }
+
+        // 模板是引用比较（变了才重写）：写一次 ItemTemplate 会让 ItemsRepeater
+        // 把已有条目全部拆了重建，本来没事的两个 int 比较挡掉这些重建。
+        var template = ResolveItemTemplate(newElement);
+        if (!ReferenceEquals(control.ItemTemplate, template))
+        {
+            control.ItemTemplate = template!;
         }
     }
 
-    protected override void Unmount(Reconciler reconciler, StackPanel control) => Callbacks.Remove(control);
-
-    private static bool ItemsChanged(IReadOnlyList<string>? old, IReadOnlyList<string>? next) =>
-        (old?.Count ?? 0) != (next?.Count ?? 0) ||
-        (old is not null && next is not null && !old.SequenceEqual(next));
-
-    /// <summary>自建实现：横向文本 + “›” 分隔符，最后一项可点击。</summary>
-    private static void Fill(StackPanel panel, BreadcrumbBarElement element)
+    protected override void Unmount(Reconciler reconciler, MuxControls.BreadcrumbBar control)
     {
-        panel.Children.Clear();
+        control.ItemClicked -= OnItemClicked;
+        Callbacks.Remove(control);
+        Carriers.Remove(control);
+    }
 
-        // 模板里条目是 SubtitleTextBlockStyle + FontSize 28：样式给字形，字号给大小。
-        var itemStyle = element.ItemStyleKey is { Length: > 0 } key ? StyleSheet.Resolve(key) : null;
-        var itemFontSize = element.ItemFontSize;
+    private static void OnItemClicked(
+        MuxControls.BreadcrumbBar sender,
+        MuxControls.BreadcrumbBarItemClickedEventArgs args)
+    {
+        if (Callbacks.TryGetValue(sender, out var callback))
+        {
+            callback?.Invoke(args.Index);
+        }
+    }
 
-        // 分隔符字号跟着条目缩放（条目 28 时约 17），否则 28px 文字配 12px 的“›”明显失衡。
-        var separatorSize = itemFontSize is { } size ? Math.Max(8, size * 0.6) : 12;
-
-        var subtle = ThemeResource.Brush("TextFillColorSecondaryBrush");
+    /// <summary>
+    /// 同步向量内容。内容没变就<b>一个字节都不动</b>——<c>Clear()</c> 会让内部的
+    /// ItemsRepeater 把条目全拆了重建，每轮重渲染清一次等于永远在重建。
+    /// </summary>
+    /// <remarks>
+    /// 喂进去的是<b>字符串</b>（数据）。别改回 <c>UIElement</c>：那样一来
+    /// <c>Items.Add</c> 会先给它置一个父，ItemsRepeater 再挂就是第二个父，
+    /// 第一次布局即 0x800F1000（见类注释，probe mode=5 实证）。
+    /// </remarks>
+    private static void SyncItems(ItemCollection target, BreadcrumbBarElement element)
+    {
         var list = element.Items ?? Array.Empty<string>();
 
-        for (var i = 0; i < list.Count; i++)
+        if (target.Count == list.Count)
         {
-            if (i > 0)
+            var same = true;
+            for (var i = 0; i < list.Count; i++)
             {
-                panel.Children.Add(new TextBlock
+                if (target[i] is not string text ||
+                    !string.Equals(text, list[i], StringComparison.Ordinal))
                 {
-                    Text = "\u203A", // ›
-                    FontSize = separatorSize,
-                    Margin = new Thickness(4, 0, 4, 0),
-                    Foreground = subtle,
-                    VerticalAlignment = VerticalAlignment.Center,
-                });
-            }
-
-            var index = i;
-            var text = new TextBlock
-            {
-                Text = list[i],
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-
-            if (itemStyle is not null)
-            {
-                text.Style = itemStyle;
-            }
-
-            if (itemFontSize is { } fontSize)
-            {
-                text.FontSize = fontSize;
-            }
-
-            text.Tapped += (_, _) =>
-            {
-                if (Callbacks.TryGetValue(panel, out var callback))
-                {
-                    callback?.Invoke(index);
+                    same = false;
+                    break;
                 }
-            };
+            }
 
-            panel.Children.Add(text);
+            if (same)
+            {
+                return;
+            }
+        }
+
+        target.Clear();
+
+        foreach (var text in list)
+        {
+            target.Add(text);
         }
     }
+
+    /// <summary>
+    /// 解析条目模板——等价于模板 <c>MainPage.xaml</c> 里的
+    /// <c>&lt;BreadcrumbBar.ItemTemplate&gt;&lt;TextBlock Text="{x:Bind}"
+    /// VerticalAlignment="Center" Style="{StaticResource TitleTextBlockStyle}"/&gt;</c>。
+    /// </summary>
+    /// <returns>
+    /// 没有定样式也没定字号时返回 null（用控件自己的默认外观，官方 <c>ItemTemplate</c>
+    /// 也是 null），其余情况返回 "</c>DataTemplate</c>"。
+    /// </returns>
+    private static Windows.UI.Xaml.DataTemplate? ResolveItemTemplate(BreadcrumbBarElement element)
+    {
+        var styleKey = element.ItemStyleKey is { Length: > 0 } key ? key : null;
+
+        // 样式、字号一个都没给 → 用控件自带的外观（官方 ItemTemplate 此时也是 null）。
+        if (styleKey is null && element.ItemFontSize is not { })
+        {
+            return null;
+        }
+
+        // 先看这一档有没有解出来过（同一个 key + 字号只 Load 一次）。
+        var cacheKey = styleKey ?? string.Empty;
+        if (element.ItemFontSize is { } size)
+        {
+            cacheKey += "|" + size.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        if (Templates.TryGetValue(cacheKey, out var cached))
+        {
+            return cached;
+        }
+
+        // 保险：样式真的查得到才写进 XAML。Load 出来的独立树没有父链，
+        // key 写错的话 layout 期会因为解析不到资源而崩（且不带托管堆栈）。
+        if (styleKey is not null &&
+            (UnresolvedStyles.Contains(styleKey) ||
+             (StyleSheet.Resolve(styleKey) is null && ThemeResource.Get<Style>(styleKey) is null)))
+        {
+            if (UnresolvedStyles.Add(styleKey))
+            {
+                Reactor.Uwp.Hosting.ReactorApplication.Trace(
+                    $"[reactor] 面包屑: 资源里没有样式 {styleKey}，跳过（用默认外观）");
+            }
+
+            // 连样式都没有又没给字号的话，就彻底用控件自带的外观。
+            if (element.ItemFontSize is not { })
+            {
+                return null;
+            }
+
+            styleKey = null;
+        }
+
+        try
+        {
+            var template = (Windows.UI.Xaml.DataTemplate)Windows.UI.Xaml.Markup.XamlReader.Load(
+                BuildItemTemplateXaml(styleKey, element.ItemFontSize));
+
+            Templates[cacheKey] = template;
+            return template;
+        }
+        catch (Exception ex)
+        {
+            // 模板挂不上不能把整棵界面树拖死：退化为默认外观（字号是官方默认的 14px）。
+            Reactor.Uwp.Hosting.ReactorApplication.Trace(
+                $"[reactor] 面包屑 ItemTemplate 构造失败: [{ex.GetType().Name}] {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 拼 <c>DataTemplate</c> 的 XAML。UWP 没有 <c>FrameworkElementFactory</c>，
+    /// 这是纯代码里唯一的等价写法（AOT 下实测可用，见类注释）。
+    /// </summary>
+    /// <remarks>
+    /// 文本构造本身在 <see cref="BreadcrumbTemplate"/> 里（纯字符串、不碰 WinRT），
+    /// 这样控制台测试能直接断言这段 XAML，不用开 App。
+    /// </remarks>
+    private static string BuildItemTemplateXaml(string? styleKey, double? fontSize) =>
+        BreadcrumbTemplate.BuildXaml(styleKey, fontSize);
 }
 
 /// <summary>
@@ -795,6 +916,12 @@ internal sealed class FrameHandler : ElementHandler<FrameElement, Frame>
     {
         var frame = new Frame();
 
+        // 显式写死为 0（也就是 XAML 的默认值）：GoBack 走的是"重建页面"路径，
+        // 不是"恢复缓存的那个实例"。不写死的话一旦有人改了 CacheSize，
+        // GoBack 会把上一轮的 Page 原样端回来——那棵树我们已经卸载过了，
+        // 端回来就是个空壳。
+        frame.CacheSize = 0;
+
         // XAML 里 <c>&lt;Frame.ContentTransitions&gt;</c> 就是这一层；模板没写，
         // 但显式给一份可以确保 NavigationThemeTransition 的存在（Frame 默认也用它）。
         frame.ContentTransitions = CreateTransitions(element.Transition);
@@ -802,7 +929,7 @@ internal sealed class FrameHandler : ElementHandler<FrameElement, Frame>
         if (element.Content is { } content)
         {
             var page = reconciler.Build(content);
-            Navigate(frame, element.Transition, page);
+            Navigate(frame, element.Transition, page, element.StackDepth >= 0);
         }
 
         return frame;
@@ -851,12 +978,71 @@ internal sealed class FrameHandler : ElementHandler<FrameElement, Frame>
         if (current is not null)
         {
             reconciler.UnmountNative(current, oldContent ?? EmptyElement.Instance);
+
+            // 旧页面马上要被推进 Frame 的 BackStack：<b>必须</b>先摘掉它的 Content。
+            // 卸载（UnmountNative）是递归的，但它只解绑记账、不动父子关系——
+            // 不清 Content 的话整棵原生控件树会被那张弃用的 Page 一直吊着，永不回收。
+            host!.Content = null;
         }
 
-        // 页面换了：走官方 Frame.Navigate——导航过渡只由 Navigate 驱动，
-        // 直接改 Content 是不会播放的。
-        Navigate(control, newElement.Transition, reconciler.Build(newContent));
+        var isBack = IsBackNavigation(oldElement, newElement);
+
+        // 返回走官方 Frame.GoBack()：和模板 ContentFrame.GoBack() 同一条路径，
+        // 反向过渡、返回音效、BackStack 出栈全都由 XAML 自己驱动，不用我们模拟。
+        if (isBack && control.CanGoBack)
+        {
+            GoBack(control, reconciler.Build(newContent));
+            return;
+        }
+
+        // 前进（或"说是返回但 Frame 没有可回退的栈"——两套栈不同步时的兜底）：
+        // 走官方 Frame.Navigate，导航过渡只由 Navigate 驱动，直接改 Content 不播。
+        Navigate(
+            control,
+            isBack ? PageTransition.SlideFromLeft : newElement.Transition,
+            reconciler.Build(newContent),
+            preserveBackStack: newElement.StackDepth >= 0,
+            fallbackBackSound: isBack);
     }
+
+    /// <summary>
+    /// 返回：走官方 <c>Frame.GoBack()</c>。
+    /// </summary>
+    /// <remarks>
+    /// 这才是与 XAML 模板一致的做法——<c>ContentFrame.GoBack()</c> 与
+    /// <c>ContentFrame.Navigate(...)</c> 是两条不同的官方路径：返回会播反向过渡，
+    /// 并且（按官方设计）播 <c>ElementSoundKind.GoBack</c>。之前一律用
+    /// <c>Navigate</c> 模拟，等于把"返回"做成"进入下一页"，观感和声音都对不上。
+    /// <para>
+    /// <b>为什么可以用真 GoBack</b>：<c>Frame.CacheSize</c> 默认是 0，官方的
+    /// <c>GoBack()</c> 本来就是<b>重建</b>页面，不是恢复缓存实例。所以不需要把上一页
+    /// 的原生控件树留着——重建出来的新 Page 直接注入当前元素树即可。
+    /// </para>
+    /// </remarks>
+    private static void GoBack(Frame frame, UIElement? content)
+    {
+        frame.GoBack();
+
+        Reactor.Uwp.Hosting.ReactorApplication.Trace(
+            $"[reactor] Frame.GoBack: 剩余回退栈 {frame.BackStackDepth} 条");
+
+        if (frame.Content is Page page)
+        {
+            ApplyPageHost(page, content);
+        }
+    }
+
+    /// <summary>
+    /// 这次切页是不是"返回"：页面栈深度比上一次小就是返回。
+    /// </summary>
+    /// <remarks>
+    /// 两边深度都传了（<c>&gt;= 0</c>）才判断；任一侧是默认值 <c>-1</c> 说明上层
+    /// 没参与方向标记，一律按前进处理（行为与改动前一致）。
+    /// </remarks>
+    private static bool IsBackNavigation(FrameElement oldElement, FrameElement newElement) =>
+        oldElement.StackDepth >= 0 &&
+        newElement.StackDepth >= 0 &&
+        newElement.StackDepth < oldElement.StackDepth;
 
     protected override Element? SingleChildOf(FrameElement element) => element.Content;
 
@@ -871,15 +1057,87 @@ internal sealed class FrameHandler : ElementHandler<FrameElement, Frame>
     /// 不依赖应用自己的 XAML 元数据，纯代码应用也能解析（自建的 Page 子类则不行）。
     /// 建好的页面元素树注入这次导航创建的 <c>Page.Content</c>。
     /// </remarks>
-    private static void Navigate(Frame frame, PageTransition transition, UIElement? content)
+    private static void Navigate(
+        Frame frame,
+        PageTransition transition,
+        UIElement? content,
+        bool preserveBackStack,
+        bool fallbackBackSound = false)
     {
         frame.Navigate(typeof(Page), null, CreateTransitionInfo(transition));
 
+        // preserveBackStack=false（上层没传 StackDepth）：返回不由 Frame 管，
+        // 每次 Navigate 都会往 BackStack 压一条而我们从不 GoBack——切页 N 次就攒
+        // N 张 Page，每张都吊着一棵原生控件树，纯泄漏。这时清掉。
+        // preserveBackStack=true：BackStack <b>就是</b>页面栈，返回靠 GoBack，
+        // 清了就退不回去了。
+        if (!preserveBackStack && frame.BackStackDepth > 0)
+        {
+            Reactor.Uwp.Hosting.ReactorApplication.Trace(
+                $"[reactor] Frame.Navigate: 清理 {frame.BackStackDepth} 条回退栈");
+            frame.BackStack.Clear();
+        }
+
+        frame.ForwardStack.Clear();
+
         if (frame.Content is Page page)
         {
-            page.HorizontalContentAlignment = HorizontalAlignment.Stretch;
-            page.VerticalContentAlignment = VerticalAlignment.Stretch;
-            page.Content = content;
+            ApplyPageHost(page, content);
+        }
+
+        // 兜底：说是返回但 Frame 没栈可退（两套栈没同步上），退化成了 Navigate——
+        // 这条路径上官方不会播返回音，手动补一次。
+        if (fallbackBackSound)
+        {
+            PlayGoBackSound();
+        }
+    }
+
+    /// <summary>把页面元素树挂进这次导航/回退产出的 <c>Page</c>。</summary>
+    private static void ApplyPageHost(Page page, UIElement? content)
+    {
+        page.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+        page.VerticalContentAlignment = VerticalAlignment.Stretch;
+        page.Content = content;
+    }
+
+    /// <summary>
+    /// 返回导航的提示音（<b>兜底</b>：正常路径由 <c>Frame.GoBack()</c> 自己播）。
+    /// </summary>
+    /// <remarks>
+    /// 官方设计文档「返回导航（Back Navigation）」一节：从当前页面导航到应用内前一个
+    /// 页面时，应调用 <c>ElementSoundPlayer.Play(ElementSoundKind.GoBack)</c>。
+    /// 系统里确实有这个专属音效资源（<c>Windows.UI.Xaml.dll</c> 里的
+    /// <c>GoBack_48000Hz</c>），音色与 <c>Invoke</c> 不同——XAML 版点返回听到的
+    /// "不一样的音效"就是它。
+    /// <para>
+    /// 正常路径是 <see cref="GoBack"/> 里的 <c>Frame.GoBack()</c>，音效由官方路径
+    /// 驱动。只有"说是返回但 Frame 没栈可退、退化成 Navigate"时才调这里补一次。
+    /// </para>
+    /// <para>
+    /// <b>坑</b>：<c>ElementSoundPlayer</c> 在 <c>Windows.UI.Xaml</c> 命名空间，
+    /// 不在 <c>Windows.UI.Xaml.Controls</c>——写成后者报 CS0234，报错信息容易被
+    /// 误读成"这个投影程序集里没有该类型"。
+    /// </para>
+    /// <para>
+    /// 不用自己判断开关：<c>Play</c> 内部会看 <c>ElementSoundPlayer.State</c>，
+    /// 不是 <c>On</c> 时它自己就不发声。
+    /// </para>
+    /// </remarks>
+    private static void PlayGoBackSound()
+    {
+        try
+        {
+            Windows.UI.Xaml.ElementSoundPlayer.Play(Windows.UI.Xaml.ElementSoundKind.GoBack);
+
+            Reactor.Uwp.Hosting.ReactorApplication.Trace(
+                $"[reactor] 返回导航: 播 GoBack 音效（State={Windows.UI.Xaml.ElementSoundPlayer.State}）");
+        }
+        catch (Exception ex)
+        {
+            // 音效不是关键路径：播不出来也不能把导航拖崩。
+            Reactor.Uwp.Hosting.ReactorApplication.Trace(
+                $"[reactor] 返回音效播放失败: [{ex.GetType().Name}] {ex.Message}");
         }
     }
 
@@ -911,6 +1169,10 @@ internal sealed class FrameHandler : ElementHandler<FrameElement, Frame>
             PageTransition.SlideFromRight => new SlideNavigationTransitionInfo
             {
                 Effect = SlideNavigationTransitionEffect.FromRight,
+            },
+            PageTransition.SlideFromLeft => new SlideNavigationTransitionInfo
+            {
+                Effect = SlideNavigationTransitionEffect.FromLeft,
             },
             _ => new EntranceNavigationTransitionInfo(),
         };

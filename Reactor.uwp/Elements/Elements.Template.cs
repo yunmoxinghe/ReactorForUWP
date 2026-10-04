@@ -59,15 +59,34 @@ public sealed record BreadcrumbBarElement(IReadOnlyList<string> Items) : Element
     public Action<int>? OnItemClicked { get; init; }
 
     /// <summary>
-    /// 条目文字的字号。null = 用控件默认（14px 正文）。
-    /// 模板 <c>MainPage.xaml</c> 的 ItemTemplate 显式写的是 <c>FontSize="28"</c>。
+    /// 条目文字的字号。null = 用 <see cref="ItemStyleKey"/> 里的值。
     /// </summary>
+    /// <remarks>
+    /// 模板 <c>MainPage.xaml</c> 是在 <c>ItemTemplate</c> 里用
+    /// <c>TitleTextBlockStyle</c> 定的 28px，没单独写字号——所以一般不填这个，
+    /// 让样式说话。填了就写进 <c>ItemTemplate</c> 里那个
+    /// <c>TextBlock</c> 的 <c>FontSize</c> 属性（本地值压过样式里的同名字号）。
+    /// </remarks>
     public double? ItemFontSize { get; init; }
 
     /// <summary>
     /// 条目文字的命名样式键（自定义样式表 → 应用资源字典）。
-    /// 模板用的是 <c>SubtitleTextBlockStyle</c>，再由 <see cref="ItemFontSize"/> 覆盖字号。
+    /// 模板用的是 <c>TitleTextBlockStyle</c>（28px Semibold）。
     /// </summary>
+    /// <remarks>
+    /// 落到 <c>ItemTemplate</c> 里那个 <c>TextBlock</c> 的
+    /// <c>Style="{StaticResource ...}"</c>——和模板 XAML 一模一样的位置。
+    /// <para>
+    /// <b>别想着"设到 BreadcrumbBar 上让它继承"</b>：<c>BreadcrumbBarItem</c>
+    /// 的默认样式硬设了 <c>FontSize</c> / <c>FontFamily</c> / <c>FontWeight</c>，
+    /// 继承链到条目就断了，设多大都不生效。
+    /// </para>
+    /// <para>
+    /// <b>更别想着"把 TextBlock 当 item 喂进去"</b>：<c>UIElement</c> 放进集合时
+    /// 就已经拿了父，<c>ItemsRepeater</c> 再挂一次就是第二个父 →
+    /// 首次布局 0x800F1000 "Element is already the child of another element."
+    /// </para>
+    /// </remarks>
     public string? ItemStyleKey { get; init; }
 }
 
@@ -202,6 +221,12 @@ public enum PageTransition
 
     /// <summary>淡入 + 从右侧滑入（适合"前进"）。</summary>
     SlideFromRight = 3,
+
+    /// <summary>
+    /// 淡入 + 从左侧滑入（"返回"的方向）。<c>Frame.GoBack()</c> 用的就是反向过渡，
+    /// 返回时用它才和 XAML 版本同一个观感。
+    /// </summary>
+    SlideFromLeft = 4,
 }
 
 /// <summary>
@@ -225,4 +250,25 @@ public sealed record FrameElement(Element? Content) : Element
 {
     /// <summary>页面切换过渡，默认 <see cref="PageTransition.Entrance"/>。</summary>
     public PageTransition Transition { get; init; } = PageTransition.Entrance;
+
+    /// <summary>
+    /// 当前页面栈的深度（<c>1</c> = 只有起始页）。
+    /// </summary>
+    /// <remarks>
+    /// 传了它（<c>&gt;= 0</c>）就启用<b>官方导航栈</b>：深度比上一次小就是返回，
+    /// 走官方 <c>Frame.GoBack()</c>；否则走 <c>Frame.Navigate(...)</c>——
+    /// 与 XAML 模板的 <c>ContentFrame.GoBack()</c> / <c>Navigate()</c> 完全同构，
+    /// 反向过渡、返回音效、BackStack 出栈全由 XAML 自己驱动。
+    /// <para>
+    /// <b>为什么不一律走 Navigate 来"模拟"返回</b>：<c>GoBack()</c> 与
+    /// <c>Navigate()</c> 在 XAML 里是两条不同路径，返回有独立的过渡方向和
+    /// <see cref="Windows.UI.Xaml.ElementSoundKind.GoBack"/> 音效（设计文档
+    /// 「返回导航」一节明写）。用 Navigate 模拟的话，这些差异一个都拿不到。
+    /// </para>
+    /// <para>
+    /// 负数（默认 <c>-1</c>）表示"不参与导航栈"：一律走 Navigate，且每次都会清掉
+    /// BackStack（因为没人 GoBack，留着就是泄漏）。给不需要返回语义的页面容器用。
+    /// </para>
+    /// </remarks>
+    public int StackDepth { get; init; } = -1;
 }

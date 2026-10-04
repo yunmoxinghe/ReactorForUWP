@@ -173,10 +173,16 @@ public static partial class Factories
     /// 内容页容器（对应 XAML 的 Frame）。
     /// </summary>
     /// <param name="transition">页面切换过渡（默认淡入上移）。</param>
+    /// <param name="stackDepth">
+    /// 当前页面栈深度（<c>1</c> = 只有起始页）。传了它，返回时会走返回方向的过渡
+    /// 并播 <c>ElementSoundKind.GoBack</c> 音效，与 XAML 的 <c>Frame.GoBack()</c>
+    /// 对齐；不传（默认 <c>-1</c>）则一律按前进处理。
+    /// </param>
     public static FrameElement Frame(
         Element? content,
-        PageTransition transition = PageTransition.Entrance) =>
-        new(content) { Transition = transition };
+        PageTransition transition = PageTransition.Entrance,
+        int stackDepth = -1) =>
+        new(content) { Transition = transition, StackDepth = stackDepth };
 
     // ── 导航视图（模板向重载）─────────────────────────────────
 
