@@ -41,3 +41,10 @@ Reactor.Uwp.Native/winmd/
 
 # 预编译产物（可选：如果想在 CI 重新生成）
 # Reactor.Uwp.Native/prebuilt/
+#
+# 注：prebuilt/ 下的 Reactor.Uwp.Native.dll 是**要入库**的——CI 不做交叉编译，
+# 直接把它打进 runtimes\win-{x64,arm64}\native\。但链接器顺带产出的
+# exp / lib / pdb 对消费方没用，只占空间，这里排掉。
+Reactor.Uwp.Native/prebuilt/**/*.exp
+Reactor.Uwp.Native/prebuilt/**/*.lib
+Reactor.Uwp.Native/prebuilt/**/*.pdb

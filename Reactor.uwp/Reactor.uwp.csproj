@@ -1,7 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
-    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <!-- 19041：与两个示例 / UwpApp / UWP-Blank-Template 一致。库声明的下限会传给
+         消费方，写 17763 等于宣称支持一个没人验过的下限。 -->
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
     <Nullable>enable</Nullable>
     <UseUwp>true</UseUwp>
     <DefaultLanguage>zh-CN</DefaultLanguage>
@@ -27,7 +29,9 @@
        授权：MIT，与仓库根目录的 LICENSE 一致（nuget.org 上 Reactor.Uwp 这个 id 未被占用）。 -->
   <PropertyGroup>
     <PackageId>Reactor.Uwp</PackageId>
-    <PackageVersion>0.1.0-alpha.3</PackageVersion>
+    <!-- alpha.4 起包里带 runtimes\win-arm64\native\Reactor.Uwp.Native.dll
+         （与 win-x64 并列），示例的 Platforms 因此能写 x64;arm64。 -->
+    <PackageVersion>0.1.0-alpha.4</PackageVersion>
     <Authors>云漠星</Authors>
     <Copyright>Copyright © 2026 云漠星</Copyright>
     <Description>UWP + WinUI 2 的声明式 UI 框架：用 C# 描述界面，不写 XAML。映射 WinUI 2 控件（不是内置控件树），带自实现的虚拟列表与 ItemsRepeater 原生工厂桥。</Description>
@@ -53,11 +57,19 @@
   </ItemGroup>
 
   <!-- 原生桥 DLL：按架构进 runtimes\，落盘由 build\Reactor.uwp.targets 负责。
-       只打实际存在的架构——缺哪个架构，那个架构就没有自定义工厂（见 README 限制）。 -->
+       两个 ItemGroup 一模一样、只有架构不同：只打实际存在的架构——缺哪个架构，
+       那个架构就没有自定义工厂（见 README 限制）。加新架构时照抄一段即可。 -->
   <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)..\Reactor.Uwp.Native\prebuilt\x64\Reactor.Uwp.Native.dll')">
     <None Include="$(MSBuildThisFileDirectory)..\Reactor.Uwp.Native\prebuilt\x64\Reactor.Uwp.Native.dll"
           Pack="true"
           PackagePath="runtimes\win-x64\native\"
+          Visible="false" />
+  </ItemGroup>
+
+  <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)..\Reactor.Uwp.Native\prebuilt\arm64\Reactor.Uwp.Native.dll')">
+    <None Include="$(MSBuildThisFileDirectory)..\Reactor.Uwp.Native\prebuilt\arm64\Reactor.Uwp.Native.dll"
+          Pack="true"
+          PackagePath="runtimes\win-arm64\native\"
           Visible="false" />
   </ItemGroup>
 
@@ -68,5 +80,26 @@
     <!-- SettingsCard / SettingsExpander（WinUI 设置页的事实标准容器）。
          该包同时提供 net8/net9-windows10.0.26100 投影，与本项目 TFM 兼容。 -->
     <PackageReference Include="CommunityToolkit.Uwp.Controls.SettingsControls" Version="8.2.251219" />
+    <!-- Microsoft.UI.Xaml → Microsoft.Web.WebView2 的**WPF** 资产
+         （Microsoft.Web.WebView2.Wpf.dll）是纯传递依赖：UWP 侧的 WebView2 走
+         Microsoft.UI.Xaml.winmd 与 Microsoft.Web.WebView2.Core.winmd，那两个 Wpf
+         dll 根本用不到，却会与 .NET 的 WindowsBase 撞版本（warning MSB3277）。 -->
   </ItemGroup>
+
+  <!-- 上面那个 Wpf.dll 是上游 Microsoft.UI.Xaml 的 buildTransitive 直接加成 Reference 的，
+       不是走包资产图进来的 —— 所以 ExcludeAssets 对它无效（试过 "all" 和
+       "buildTransitive"，warning 都还在）。只能在 Reference 收集完之后摘掉：
+       UWP 永远不会加载 WPF 程序集，留着只贡献一条 MSB3277。 -->
+  <!-- BeforeTargets 而不是 AfterTargets：MSB3277 是 ResolveAssemblyReference 任务
+       自己打出来的，等它跑完再摘就晚了。静态 ItemGroup 的求值都在评估阶段完成，
+       所以执行阶段开头的这个 Remove 一定排在那些包 targets 之后。 -->
+  <Target Name="ReactorRemoveWebView2Wpf" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <!-- 按文件名而不是程序集名匹配：那个 Reference 的 Include 是**完整路径**
+           （lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll），
+           Remove="Microsoft.Web.WebView2.Wpf" 匹配不上（试过，无效）。 -->
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
+
 </Project>

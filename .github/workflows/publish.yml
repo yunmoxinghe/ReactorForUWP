@@ -42,11 +42,30 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      # 这里**不能**加 -p:Platform=x64：那样包里的托管程序集会被编成 x64 专属
+      # （lib\...\Reactor.uwp.dll 的 PE machine 变 0x8664），arm64 消费方引用它
+      # 就报 CS8012"引用程序集面向的是另一个处理器"。用默认平台（AnyCPU）打包，
+      # 打出来才是纯 IL（0x14c），x64 / arm64 都能引用。
+      # 原生桥的两个架构是预编译产物，跟 pack 的平台无关，照样都进包。
       - name: Pack
-        run: dotnet pack Reactor.uwp/Reactor.uwp.csproj -c Release -p:Platform=x64 -o artifacts
+        run: dotnet pack Reactor.uwp/Reactor.uwp.csproj -c Release -o artifacts
 
       - name: 列出产物
         run: Get-ChildItem artifacts | Format-Table Name, Length
+
+      # 防回归：arm64 的原生桥曾经漏打过（csproj 里只列了 x64 的打包项），
+      # 包照样出、照样能推，只有消费方在 arm64 下才炸。这里直接在 CI 里卡住。
+      - name: 校验双架构原生桥都在包里
+        shell: pwsh
+        run: |
+          $pkg = @(Get-ChildItem artifacts\*.nupkg | Where-Object { $_.Extension -eq '.nupkg' })[0]
+          $tmp = Join-Path $env:RUNNER_TEMP 'pkgcheck'
+          Expand-Archive -Path $pkg.FullName -DestinationPath $tmp -Force
+          foreach ($arch in @('win-x64', 'win-arm64')) {
+            $p = Join-Path $tmp "runtimes\$arch\native\Reactor.Uwp.Native.dll"
+            if (-not (Test-Path $p)) { throw "包里缺 runtimes\$arch\native\Reactor.Uwp.Native.dll" }
+            Write-Host "ok  runtimes\$arch\native\Reactor.Uwp.Native.dll"
+          }
 
       - uses: actions/upload-artifact@v6
         with:

@@ -10,8 +10,13 @@
 -->
 <Project>
 
+  <!-- 架构目录名一律用小写：Platform 在 VS 里是 ARM64（大写约定），而 RID 和
+       runtimes\ 目录是 win-arm64。Windows 文件访问不区分大小写，所以拼大写也能
+       打开；但下面的 EndsWith 是区分大小写的字符串比较，不统一大小写会误判。 -->
   <PropertyGroup>
-    <ReactorNativeDir>$(MSBuildThisFileDirectory)..\runtimes\win-$(Platform)\native</ReactorNativeDir>
+    <ReactorRid>win-$(Platform)</ReactorRid>
+    <ReactorRidLower>$(ReactorRid.ToLowerInvariant())</ReactorRidLower>
+    <ReactorNativeDir>$(MSBuildThisFileDirectory)..\runtimes\$(ReactorRidLower)\native</ReactorNativeDir>
     <ReactorNativeDll>$(ReactorNativeDir)\Reactor.Uwp.Native.dll</ReactorNativeDll>
   </PropertyGroup>
 
@@ -22,8 +27,8 @@
        win-x64\win-x64\AppX\（本机示例开 AOT 后就是这么撞出来的）。
        所以先判断是否已以 win-$(Platform) 结尾，是的话直接在它下面建 AppX。 -->
   <PropertyGroup>
-    <ReactorAppxDir>$(OutDir)win-$(Platform)\AppX\</ReactorAppxDir>
-    <ReactorAppxDir Condition="$(OutDir.EndsWith('win-$(Platform)\'))">$(OutDir)AppX\</ReactorAppxDir>
+    <ReactorAppxDir>$(OutDir)$(ReactorRid)\AppX\</ReactorAppxDir>
+    <ReactorAppxDir Condition="$(OutDir.ToLowerInvariant().EndsWith('$(ReactorRidLower)\'))">$(OutDir)AppX\</ReactorAppxDir>
   </PropertyGroup>
 
   <!-- 常规输出目录：覆盖不带 AppX 子目录的构建形态。 -->
