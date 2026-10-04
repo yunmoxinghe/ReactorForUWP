@@ -36,20 +36,21 @@ public sealed class CounterPage : Component
 | `UwpApp/` | 测试壳：压测 M0~M5、虚拟列表 / Echo 实验室、CoreLoop 回归、元素画廊，一次部署点菜单跑完 |
 | `tests/` | 控制台用例（EchoGuard、虚拟列表身份、Hook、Context），不需要开 App |
 | `diag-run.ps1` | 无人值守压测：构建 → 同步产物 → 启动 → 等本轮跑完 → 打印 summary |
-| `samples/` | 示例集：只装 NuGet 包、不引用框架源码，8 个主题页，见 `samples/README.md` |
+| `samples/` | 示例：`Reactor.Template`（起点模板）+ `Reactor.Gallery`（8 个主题页），都只装 NuGet 包不引用框架源码，见 `samples/README.md` |
 | `tools/` | 辅助脚本 |
 
 ## 跑起来
 
 环境：.NET 10 SDK、Windows 10 SDK `10.0.26100`、x64。
 UWP 项目不能像普通控制台那样直接跑，要用 Visual Studio 打开
-`ReacrorForUWP.slnx`，把 `UwpApp`（测试壳）或 `Reactor.Samples`（示例集）
-设为启动项目部署运行（F5）。
+`ReacrorForUWP.slnx`，把 `UwpApp`（测试壳）或 `samples` 下的
+`Reactor.Template` / `Reactor.Gallery` 设为启动项目部署运行（F5）。
 
 ```bash
 # 只构建
 dotnet build UwpApp/UwpApp.csproj -c Debug -p:Platform=x64
-dotnet build samples/Reactor.Samples/Reactor.Samples.csproj -c Debug -p:Platform=x64
+dotnet build samples/Reactor.Template/Reactor.Template.csproj -c Debug -p:Platform=x64
+dotnet build samples/Reactor.Gallery/Reactor.Gallery.csproj -c Debug -p:Platform=x64
 
 # 打框架包
 dotnet pack Reactor.uwp/Reactor.uwp.csproj -c Release -p:Platform=x64
