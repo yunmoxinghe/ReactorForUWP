@@ -11,6 +11,7 @@
     <PublishAot>true</PublishAot>
     <PublishProfile>win-$(Platform).pubxml</PublishProfile>
     <DisableRuntimeMarshalling>true</DisableRuntimeMarshalling>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <EnableMsixTooling>true</EnableMsixTooling>
   </PropertyGroup>
 
@@ -20,5 +21,20 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Reactor.uwp\Reactor.uwp.csproj" />
+  </ItemGroup>
+
+  <!-- 原生桥 DLL：必须显式在主项目里声明一次。
+       库项目（Reactor.uwp）没有 RuntimeIdentifier，它的 Content 输出落在
+       bin\x64\Debug\<tfm>\ 下；而本 App 带 RID，实际运行目录是
+       bin\x64\Debug\<tfm>\win-x64\AppX\ —— 两者不是一个目录，
+       跨项目引用的 Content 不会自动跟着进 RID 子目录，
+       结果就是 LibraryImport("Reactor.Uwp.Native.dll") 在运行时抛 DllNotFoundException。
+       这里按平台直接指向预编译产物，缺该架构时静默跳过，不阻塞其它架构构建。 -->
+  <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)..\Reactor.Uwp.Native\prebuilt\$(Platform)\Reactor.Uwp.Native.dll')">
+    <Content Include="$(MSBuildThisFileDirectory)..\Reactor.Uwp.Native\prebuilt\$(Platform)\Reactor.Uwp.Native.dll">
+      <Link>Reactor.Uwp.Native.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Visible>false</Visible>
+    </Content>
   </ItemGroup>
 </Project>

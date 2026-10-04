@@ -7,7 +7,25 @@
     <DefaultLanguage>zh-CN</DefaultLanguage>
     <IsAotCompatible>true</IsAotCompatible>
     <DisableRuntimeMarshalling>true</DisableRuntimeMarshalling>
+    <!-- LibraryImport 生成的封送存根内部用到了 unsafe -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
+
+  <!-- 临时探针需要访问 Internal 层的封装，待 NativeElementFactory 接入正式 Element 后移除 -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="UwpApp" />
+  </ItemGroup>
+
+  <!-- ItemsRepeater 自定义工厂的原生桥（预编译产物，见 Reactor.Uwp.Native/build.bat）。
+       Content + Link 会被 GetCopyToOutputDirectoryItems 沿项目引用传给消费方输出目录。
+       缺某架构的预编译产物时静默跳过，不阻塞其它架构构建。 -->
+  <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)..\Reactor.Uwp.Native\prebuilt\$(Platform)\Reactor.Uwp.Native.dll')">
+    <Content Include="$(MSBuildThisFileDirectory)..\Reactor.Uwp.Native\prebuilt\$(Platform)\Reactor.Uwp.Native.dll"
+             Link="Reactor.Uwp.Native.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Visible>false</Visible>
+    </Content>
+  </ItemGroup>
 
   <ItemGroup>
     <!-- 2.8.7+ 才提供 net8.0-windows 投影程序集，可被 UseUwp 的 net10.0-windows TFM 选中；
