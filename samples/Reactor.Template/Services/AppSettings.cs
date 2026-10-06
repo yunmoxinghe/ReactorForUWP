@@ -93,6 +93,8 @@ public static class AppSettings
 
     private static Settings Load()
     {
+        Settings settings;
+
         try
         {
             var path = FilePath();
@@ -100,15 +102,49 @@ public static class AppSettings
             {
                 var loaded = JsonSerializer.Deserialize(
                     File.ReadAllText(path), SettingsJsonContext.Default.Settings);
-                if (loaded is not null) return loaded;
+                if (loaded is not null)
+                {
+                    settings = loaded;
+                }
+                else
+                {
+                    settings = new Settings();
+                }
+            }
+            else
+            {
+                settings = new Settings();
             }
         }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"[AppSettings] 读取失败：{ex.Message}");
+            settings = new Settings();
         }
 
-        return new Settings();
+        // 三项枚举必须落在<b>已定义</b>的值里。
+        // System.Text.Json 反序列化 enum 时<b>不校验</b>是否为已定义成员：
+        // 盘上写着 {"Theme":7}，读回来的就是合法的 (AppTheme)7，一路不报错，
+        // 直到它被当索引传给 RadioButtons——"选中第 7 项"，而那一组只有 3 项，
+        // 结果是什么都不选中。界面上的说法是"设了主题没生效"，
+        // 而真凶在读盘那一刻就已经离开现场了。
+        // 宁可退回默认值：默认至少是能用的，越界下标什么都不是。
+        if (!Enum.IsDefined(settings.Theme))
+        {
+            settings.Theme = AppTheme.System;
+        }
+
+        if (!Enum.IsDefined(settings.Material))
+        {
+            settings.Material = AppMaterial.Mica;
+        }
+
+        if (!Enum.IsDefined(settings.Pane))
+        {
+            settings.Pane = PanePosition.Left;
+        }
+
+        return settings;
     }
 
     private static string FilePath() =>

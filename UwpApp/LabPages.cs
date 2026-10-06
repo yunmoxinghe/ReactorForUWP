@@ -24,11 +24,20 @@ public sealed class VirtualListLabPage : Component
 
     public override Element Render()
     {
-        var (items, setItems) = UseState(MakeItems());
+        // <c>MakeItems()</c> 要建 5000 个字符串。写 <c>UseState(MakeItems())</c> 的话，
+        // <b>每帧都会白建一份</b>——实参每次进 Render 都求值，而 use state 只在挂载
+        // 那一帧认它：按一次按钮就是 5000 次字符串插值 + 一次 List 扩容，产物当场丢给 GC。
+        // 在一个专门验证"身份 vs 下标"的页面上，把这份开销混进每一帧，
+        // 观察到的现象里就分不清哪些是身份模型造成的、哪些是分配抖动造成的。
+        // 用 <c>UseMemo</c> 把种子钉成"进程生命周期一次"，再交给 use state。
+        // （这一手与 samples/Reactor.Gallery 的 VirtualizationPage 同源，别只在一份里保留。）
+        var seed = UseMemo(MakeItems);
+        var (items, setItems) = UseState(seed);
         var (useKey, setUseKey) = UseState(true);
         var (log, setLog) = UseState("尚未操作");
 
-        List<object?> boxed = items.Cast<object?>().ToList();
+        // 同理，装箱这一份也是每帧重建；它只跟着 items 变，那就声明成"跟着 items"。
+        List<object?> boxed = UseMemo(() => items.Cast<object?>().ToList(), items);
 
         return VStack(
             TextBlock($"虚拟列表实验室：{items.Count} 项，身份 = " +

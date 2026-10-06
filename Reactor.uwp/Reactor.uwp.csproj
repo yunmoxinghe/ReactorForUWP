@@ -51,7 +51,7 @@
            还挂着的时候 → 被当成用户输入回调出去（Slider / NumberBox 共有）。
          另给受控值越界加了纠正守卫，防止越界时自激。
          以上都是测试自行发现并复现的，含"不修就坏"的反向对照。 -->
-    <PackageVersion>0.1.0-alpha.6</PackageVersion>
+    <PackageVersion>0.1.0-alpha.7</PackageVersion>
     <Authors>云漠星</Authors>
     <Copyright>Copyright © 2026 云漠星</Copyright>
     <Description>UWP + WinUI 2 的声明式 UI 框架：用 C# 描述界面，不写 XAML。映射 WinUI 2 控件（不是内置控件树），带自实现的虚拟列表与 ItemsRepeater 原生工厂桥。</Description>

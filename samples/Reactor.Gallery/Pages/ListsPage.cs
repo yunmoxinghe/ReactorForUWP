@@ -82,7 +82,11 @@ public sealed class ListsPage : Component
                     Button(shrunk ? "显示全部 8 项" : "只留前 3 项", () => setShrunk(!shrunk)),
                     Button(noSelection ? "切回单选" : "切到禁止选中", () => setNoSelection(!noSelection)),
                     Button("回调计数归零", () => setHits(0))),
-                TextBlock($"ListView 选中：{(listIndex < 0 ? "无" : Fruits[listIndex])}").Caption(),
+                // 名字按 <c>shown</c> 取，不按下标直接索引 <c>Fruits</c>：
+                // 下标是"当前显示的是第几个"，不是"八个水果里的第几个"。今天只留前 3 项
+                // 恰好是前缀，两种写法结果一样；一旦换成筛选（非前缀），直接索引就会
+                // 报出另一条的名字——而且不崩，只是名字不对，很难往这边想。
+                TextBlock($"ListView 选中：{(listIndex >= 0 && listIndex < shown.Length ? shown[listIndex] : "无")}").Caption(),
                 TextBlock($"OnSelectedIndexChanged 回调次数：{hits}（换数据源 / 改模式都不该涨）").Caption(),
 
                 TextBlock("GridView：网格排布").FontSize(16),
@@ -93,8 +97,11 @@ public sealed class ListsPage : Component
                 TextBlock($"GridView 选中：{(gridIndex < 0 ? "无" : Fruits[gridIndex])}").Caption(),
 
                 TextBlock("NavigationView：换菜单 / 切显示模式").FontSize(16),
+                // 名字同样取自<b>当前这份菜单</b>（<c>navItems</c>），不是按下标直取
+                // <c>Fruits</c>：下标是"菜单里的第几个"，不是"八个水果里的第几个"。
+                // 今天是取前缀才两种写法同结果，一旦换成任意筛选就会念错名字。
                 NavigationView(
-                    TextBlock($"菜单选中：{(navIndex >= 0 && navIndex < navItems.Length ? Fruits[navIndex] : "无")}"),
+                    TextBlock($"菜单选中：{(navIndex >= 0 && navIndex < navItems.Length ? navItems[navIndex].Content : "无")}"),
                     navItems,
                     navTop ? NavPaneDisplayMode.Top : NavPaneDisplayMode.Left,
                     navIndex,

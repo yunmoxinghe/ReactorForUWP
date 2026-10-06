@@ -38,12 +38,18 @@ namespace Reactor.Gallery;
 /// 不去猜：让试听只在开关为开时可点，于是调用点必然处于 <c>State == On</c>，
 /// 两种可能的语义下都会响。这样不需要任何断言，用户点一下就能自证后端接通。
 /// </para>
+/// <para>
+/// <b>时机属于调用方，不在这里。</b><c>State</c> 只在<b>控件模板被应用的那一刻</b>
+/// 起作用（模板据此定 <c>ElementSoundMode</c>），所以必须由 <see cref="App"/>
+/// 抢在界面树建立之前设一次；只挂在本类的调用点上是补不回来的。
+/// 见 <see cref="App.OnLaunched(Windows.ApplicationModel.Activation.LaunchActivatedEventArgs)"/>。
+/// </para>
 /// </remarks>
 internal static class SoundService
 {
     /// <summary>把偏好落到真实后端。</summary>
     /// <remarks>
-    /// 吞异常是<b>刻意</b>的：这个调用挂在首帧的 <c>UseEffect</c> 上，属于启动路径，
+    /// 吞异常是<b>刻意</b>的：这个调用既出现在 <see cref="App"/> 的启动路径上，
     /// 在这儿抛就是白屏——跟 <see cref="SettingsStore"/> 里给 <c>ApplicationData</c>
     /// 兜底是同一个判据：<b>锦上添花的功能不该有把示例带崩的资格</b>。
     /// 写个静态属性原则上不抛，但那句"原则上"不值得拿启动去赌；

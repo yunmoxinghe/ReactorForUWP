@@ -160,7 +160,7 @@ internal static class DiagnosticsCountersTests
             : $"缺 {string.Join("/", missing)}，解析到的原文：{text}";
     }
 
-    /// <summary>八个键名必须能在两份源码里翻到出处，而不是只跟测试样本对齐。</summary>
+    /// <summary>九个键名必须能在三份源码里翻到出处，而不是只跟测试样本对齐。</summary>
     private static bool KeyNamesExistInSource(string root, out List<string> missing)
     {
         missing = new List<string>();

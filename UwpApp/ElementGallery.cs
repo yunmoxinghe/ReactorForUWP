@@ -205,7 +205,12 @@ public sealed class ElementGallery : Component
             ))).Backdrop(backdrop);
     }
 
-    private static Element?[] BackdropButtons(
+    /// <summary>背景材质切换按钮组。<c>CoreLoopRegression</c> 也用这一份。</summary>
+    /// <remarks>
+    /// 做成共享方法而不是两边各抄一份：五个材质项和 <c>&gt; 当前项</c> 的标记语法一旦
+    /// 只改一边，两个页面就会给出不同的"可选材质"清单，而那正是用来对照出来的本钱。
+    /// </remarks>
+    internal static Element?[] BackdropButtons(
         BackdropKind current,
         Action<BackdropKind> setBackdrop)
     {

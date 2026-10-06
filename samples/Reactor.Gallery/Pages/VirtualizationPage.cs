@@ -24,10 +24,18 @@ public sealed class VirtualizationPage : Component
 
     public override Element Render()
     {
-        var (items, setItems) = UseState(MakeItems());
+        // <c>MakeItems()</c> 要建 5000 个字符串。直接写 <c>UseState(MakeItems())</c>
+        // 的话，<b>每帧都会白建一份</b>——实参是每次进 Render 都求值的，而 use state
+        // 只在挂载那一帧认它：按一次按钮就是 5000 次字符串插值和一次 List 扩容，
+        // 产物当场丢给 GC。在一个专门演示"不要为看不见的行付代价"的页面上，
+        // 自己每帧付一次这种代价，是个会把人带偏的示范。
+        // 用 <c>UseMemo</c> 把种子钉成"进程生命周期一次"，再交给 use state。
+        var seed = UseMemo(MakeItems);
+        var (items, setItems) = UseState(seed);
         var (log, setLog) = UseState("尚未操作");
 
-        List<object?> boxed = items.Cast<object?>().ToList();
+        // 同理，装箱这一份也是每帧重建；它只跟着 items 变，那就把它声明成"跟着 items"。
+        var boxed = UseMemo(() => items.Cast<object?>().ToList(), items);
 
         return VStack(12,
             TextBlock($"虚拟化长列表（{items.Count} 项）").FontSize(20),

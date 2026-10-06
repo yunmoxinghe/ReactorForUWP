@@ -34,6 +34,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using System.Text;
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Reactor.Uwp.Internal;
@@ -110,10 +111,17 @@ namespace UwpApp
         private Action<string>? _setStatus;
 
         /// <summary>
-        /// 宿主控件的创建委托。<b>引用必须稳定</b>：每次 Render 都 new 一个 lambda
-        /// 会被 <c>NativeElement</c> 当成"要换控件"，于是每轮重渲染（刷新进度行也算）
-        /// 都会把整棵压测列表重建一遍。
+        /// 宿主控件的创建委托。此处缓存是因为它在每次 <c>Token</c> 变化时才被调用，
+        /// 缓存能让"重建只会发生在 <c>Token</c> 变化时"这件事在代码里一眼可见。
         /// </summary>
+        /// <remarks>
+        /// <b>不要把这里理解成"引用必须稳定，否则会每帧重建"。</b>框架那边的判据
+        /// 只有 <c>Token</c>：<c>Internal/Handlers.Native.cs</c> 的 <c>Update</c>
+        /// 全程只比 <c>Equals(oldElement.Token, newElement.Token)</c>，<c>Factory</c>
+        /// 的引用<b>根本不参与比较</b>。所以内联 lambda（像 <c>XamlDiffProbe</c> 那样
+        /// 直接写 <c>Native(() => host.Current!)</c>）也不会触发重建。
+        /// <c>Reactor.uwp/Elements/Native.cs</c> 上那句"引用必须稳定"的说法与实现不符。
+        /// </remarks>
         private Func<UIElement>? _hostFactory;
         private Func<UIElement> HostFactory => _hostFactory ??= BuildHost;
 
@@ -577,12 +585,23 @@ namespace UwpApp
             _log.Flush();
         }
 
+        /// <summary>
+        /// 违规总数：<b>唯一算数的地方</b>。
+        /// </summary>
+        /// <remarks>
+        /// 页面上的结论行与 summary.json 的结论必须来自同一个数——这两处以前是各自抄
+        /// 一遍同一串加法，加一项计数器时就可能出现"屏幕上写 PASS、归档里写 FAIL"，
+        /// 而那正是这一整套归档唯一不能被怀疑的东西。
+        /// </remarks>
+        private int Violations =>
+            (_factory?.Violations ?? 0)
+            + _nullData + _indexMismatch + _ghostVisible
+            + _conservationBroken + _poolOverflow;
+
         private void Finish()
         {
             var bare = $"minted={_mintedBare} reused={_reusedBare} pool={_barePool.Count}";
-            var violations = (_factory?.Violations ?? 0)
-                + _nullData + _indexMismatch + _ghostVisible
-                + _conservationBroken + _poolOverflow;
+            var violations = Violations;
 
             _log.Event("finish",
                 ("mode", Mode),
@@ -625,11 +644,7 @@ namespace UwpApp
         /// <summary>跑完之后页面上的那一行：PASS/FAIL + 关键计数 + 归档目录。</summary>
         private string FinishStatus()
         {
-            var violations = (_factory?.Violations ?? 0)
-                + _nullData + _indexMismatch + _ghostVisible
-                + _conservationBroken + _poolOverflow;
-
-            return $"{(violations == 0 ? "PASS" : "FAIL")} violations={violations} ｜ " +
+            return $"{(Violations == 0 ? "PASS" : "FAIL")} violations={Violations} ｜ " +
                    $"prepared={_prepared} clearing={_clearing} indexChanged={_indexChanged} ｜ " +
                    $"minted={_factory?.Minted ?? _mintedBare} " +
                    $"reuse={Math.Round(_factory?.ReuseRate ?? 0, 3)} ｜ ghost={_ghostVisible} ｜ " +
@@ -916,8 +931,53 @@ namespace UwpApp
             private string Json(params (string Key, object Value)[] fields) =>
                 "{" + string.Join(",", fields.Select(f =>
                     "\"" + f.Key + "\":" + (f.Value is string s
-                        ? "\"" + s.Replace("\\", "\\\\").Replace("\"", "'") + "\""
+                        ? Quote(s)
                         : Convert.ToString(f.Value, CultureInfo.InvariantCulture) ?? "null"))) + "}";
+
+            /// <summary>
+            /// 字符串值进单行 NDJSON 前必须转义。
+            /// </summary>
+            /// <remarks>
+            /// <c>events.ndjson</c> 是<b>一行一条</b>的格式：任何换字符都会把一条记录
+            /// 劈成两行，后面每一行都不是合法 JSON。以前只处理了反斜杠和引号，
+            /// 而 <c>"detail"</c> 字段装的是异常串——<c>Exception.ToString()</c>
+            /// 天生是多行的（含 <c>\r\n</c> 和 <c>\t</c>）。也就是说<b>越是需要取证
+            /// 的那一条（崩溃），归档越一定被它自己写坏</b>，事后用 jq 读直接报错，
+            /// 而现场已经没了。引号按原样降级成单引号（保持原有可读性约定），
+            /// 控制字符一律转义——不挑"\r\n\t 三个"，其余 <c>&lt; 0x20</c> 的字符
+            /// 一律走 <c>\u00xx</c>：按名单转义的写法每漏一个就是一种新的坏档方式，
+            /// 而漏的那个恰恰是没人见过的那个。
+            /// </remarks>
+            private static string Quote(string value)
+            {
+                var sb = new StringBuilder(value.Length + 8);
+                sb.Append('"');
+
+                foreach (var c in value)
+                {
+                    switch (c)
+                    {
+                        case '\\': sb.Append("\\\\"); break;
+                        case '"': sb.Append('\''); break;
+                        case '\r': sb.Append("\\r"); break;
+                        case '\n': sb.Append("\\n"); break;
+                        case '\t': sb.Append("\\t"); break;
+                        default:
+                            if (c < ' ')
+                            {
+                                sb.Append("\\u").Append(((int)c).ToString("x4", CultureInfo.InvariantCulture));
+                            }
+                            else
+                            {
+                                sb.Append(c);
+                            }
+
+                            break;
+                    }
+                }
+
+                return sb.Append('"').ToString();
+            }
         }
     }
 }

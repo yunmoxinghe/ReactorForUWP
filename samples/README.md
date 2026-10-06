@@ -1,14 +1,17 @@
 # 示例
 
-两个独立的 UWP 应用，**都只装 NuGet 包，不引用仓库里的框架源码**：
+两个独立的 UWP 应用，**引用框架的方式刻意不同**，这是分工决定的：
 
-```xml
-<PackageReference Include="Reactor.Uwp" Version="0.1.0-alpha.5" />
-```
+| 项目 | 引用方式 | 为什么这样定 |
+|---|---|---|
+| `Reactor.Template` | `PackageReference`：`Reactor.Uwp` | 它是**新项目的起点**。它能编译，才说明包里导出的公共 API 真的够用。改成 `ProjectReference` 会把导出问题掩盖掉——internal 的照样能用到（`UwpApp` 就是靠 `InternalsVisibleTo` 用了 `EchoStats`），于是"别人装了包却用不了"这类问题在仓库里永远测不出来 |
+| `Reactor.Gallery` | `ProjectReference`：`..\..\Reactor.uwp` | 它是**框架自身的验证载体**。里面那个「受控控件诊断」页要读 `ReactorLog` / 闸门计数这类**尚未发版**的观测 API，只能走工程引用。发 alpha 包之前用它跑一遍受控控件，是最快的一次性定性手段 |
 
-这样写是有意的——示例能编译通过，就说明**包里导出的公共 API 真的够用**。
-用 `ProjectReference` 指向 `Reactor.uwp` 会掩盖导出问题（internal 的也能用到，
-`UwpApp` 就是靠 `InternalsVisibleTo` 用了 `EchoStats`）。
+**这个分工的代价要事先说清，不然排查方向会被带到别处去：**
+
+- **Gallery 编译通过证明不了"包够用"**，只有 Template 能证明。两个项目不是同一类证据。
+- 反过来说，同一份写法在 Gallery 里正常、在 Template 里出问题，**第一件事就是查两边吃到的是不是同一份实现**——模板锁的那个版本有可能在 nuget.org 上还没有（那时本机靠本地源补上，见下一节），于是 Gallery 吃新代码、Template 吃旧包，阴阳脸就出来了。
+- 别照着 Gallery 的 csproj 去改 Template 的引用方式，也别反过来。
 
 示例同样守仓库那两条硬规则（详见根 `README.md` 的「兼容性契约」）：写法与官方
 Reactor 互兼容，实现一律套 WinUI 2 真控件。所以 `Reactor.Template` 里出现的每个
@@ -19,7 +22,7 @@ Toolkit 的 `SettingsCard` / `SettingsExpander`），与 XAML 模板的差别只
 | 项目 | 用途 |
 |---|---|
 | `Reactor.Template/` | **起点模板**：一比一复刻 `UWP-Blank-Template`（标题栏 + NavigationView + 主页 / 设置页 + 设置持久化 + 外链确认框），新项目从这里复制 |
-| `Reactor.Gallery/` | **示例画廊**：8 个主题页，查某种写法时来这里找 |
+| `Reactor.Gallery/` | **示例画廊**：9 个主题页，查某种写法时来这里找 |
 
 两个项目都开着 `PublishAot`（UWP + net10 的 AOT 用平台自带编译链，不额外依赖什么），
 平台列 **x64 + arm64**（`Platforms` / `RuntimeIdentifiers` / 两个 `win-*.pubxml` 都成对）。
@@ -48,11 +51,16 @@ dotnet restore samples/Reactor.Template/Reactor.Template.csproj
 
 ### 改了框架源码之后：必须走一遍的本地循环
 
-示例 csproj 里锁的那个版本**是 nuget.org 上真实存在的**，平时改示例不用走这套。
-只有一种情况需要：**框架改了、但还没发新版本**，本机想提前验。那时只能吃本地
-pack 的包，于是有一条闭环，**漏掉中间任何一步，示例都会静默跑旧代码**：NuGet
-只认"这个版本在不在缓存里"，不认内容是不是换过——同名版本重新 pack，restore
-照样命中旧的那份。
+下面这套本地循环只在一种情况下需要：**框架改了、 Template 锁的那个版本在 nuget.org 上还没有**（那时尚未发布，本机只能先用本地 pack 的包顶着）。
+
+平时版本在线上是真实存在的，改示例不用走这套——`dotnet build` 就行。
+
+判据很简单：把 Template 的 `PackageReference` 版本号往 nuget.org 的
+[版本列表](https://api.nuget.org/v3-flatcontainer/reactor.uwp/index.json) 上比对，
+**列表里有 = 走线上还原，没有 = 只能走这套**。
+
+漏掉中间任何一步，示例都会**静默跑旧代码**：NuGet 只认"这个版本在不在缓存里"，
+不认内容是不是换过——同名版本重新 pack，restore 照样命中旧的那份。
 
 "云母不跟随应用主题"就是这么来的：示例还原到的是修复前 pack 的那份 alpha.4，
 包里连 `ApplyTheme` 方法都没有（alpha.4 当时从没发到 nuget.org，本机那份是本地
@@ -313,6 +321,7 @@ cppwinrt.exe -in "C:\Program Files (x86)\Windows Kits\10\UnionMetadata\10.0.2610
 | 列表 | `ListView` / `GridView` / `ForEach`，项数少时用这个 |
 | 虚拟化长列表 | 5000 项 `VirtualizingList`（走 `ItemsRepeater` + 原生元素工厂），看只 realize 几十个容器 |
 | 设置页 | SettingsCard / SettingsExpander / Expander / ContentDialog |
+| 受控控件诊断 | 回声 / 闸门计数的**增量**读数 + `LiveProbe` 只读可视树探针：把"点一下没反应"换成可以当场念出来的证据 |
 | 组件 props | `Component<TProps>` 父子传值，record 当 props |
 | 原生控件逃生舱 | `Native()`：包还没包住的控件（NumberBox）怎么挂进来 |
 
@@ -323,6 +332,11 @@ cppwinrt.exe -in "C:\Program Files (x86)\Windows Kits\10\UnionMetadata\10.0.2610
   不做按 key 复用（官方 Reactor 同样如此），所以 `itemKey` 只在**自绘回退**路径上
   起作用——也就是原生桥没加载起来（产物没落到 `AppX`）而回退自绘时才需要它。
   那种场景下数据源会插入 / 删除时，不给稳定身份就会因为下标位移而拿错内容
-- **`Native()` 的创建委托要写成字段**：引用必须稳定，只有 `Token` 变化才重建控件
+- **`Native()` 只有 `Token` 这一个旋钮**：`Internal/Handlers.Native.cs` 的 `Update`
+  全程只比 `Equals(oldElement.Token, newElement.Token)`，`Factory` 的引用**不参与比较**。
+  所以"创建委托必须引用稳定"这句话是错的（`Reactor.uwp/Elements/Native.cs` 上的旧注释
+  与实现不符）——内联 lambda 不会每帧重建控件，但**换了工厂而 Token 没变，新工厂也不会
+  被调用**。要换控件（含换工厂）就改 `Token`。示例页把委托写成字段，是为了让
+  "重建只可能来自 Token"这件事在代码里看得见，不是为了绕开那条不存在的限制
 - **别急着关 AOT**：它能第一时间暴露反射 / 运行时代码生成这类写法；
   真需要反射就加 `rd.xml` 或 `[DynamicallyAccessedMembers]`

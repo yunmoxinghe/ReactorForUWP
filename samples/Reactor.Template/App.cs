@@ -34,6 +34,16 @@ public sealed partial class App : ReactorApplication<MainPage>
     {
         ElementSound.Apply(AppSettings.Current.Sound);
 
+        // 把框架日志提到 Trace，并起一个定时器把内存缓冲按通道转储到
+        // probe-live.log：否则"闸门为什么吞掉这一发"那一行根本落不了盘
+        // （它是 Trace 级，框架只在 Info 及以上写文件）——排查"点了没反应"
+        // 时等于没有证据。放在建树之前：首帧的挂载/下发也要记进来。
+        Probe.StartDump();
+
+        // 自检：让应用自己在真实控件上点一遍，报告落在 selftest.log。
+        // 放在建树之后——它要等控件 Loaded 才动手，而那要先有树。
+        Probe.StartSelfTest();
+
         base.OnLaunched(args);
     }
 }

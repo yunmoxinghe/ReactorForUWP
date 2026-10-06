@@ -243,10 +243,19 @@ publish 可能实际成功却被判失败。检查产物：exe 存在、PE 机�
 
 ### 示例项目可能引用的是发布包，不是源码
 
-本仓库 `samples/*` 引的是 **NuGet 发布包**（看 csproj 里锁的版本），
-`UwpApp` 才是 `ProjectReference`。所以**框架侧的修复示例项目吃不到**，
-要么就地做一份等价实现（幂等，新旧包都对），要么用包里已有的 API。
-给框架加新参数前先看 csproj 的引用方式，否则会编译失败。
+先看 csproj 的引用方式。两种并存，别凭印象，看一眼 csproj：
+
+| 工程 | 引用方式 | 吃到框架侧改动？ |
+| --- | --- | --- |
+| `samples/Reactor.Template` | `PackageReference Reactor.Uwp`（锁版本） | **吃不到**，只有发布了新包才行 |
+| `samples/Reactor.Gallery` | `ProjectReference` | 立刻吃到（包括 `Internal` 观测 API） |
+| `UwpApp` | `ProjectReference` | 立刻吃到 |
+
+Template 那份走发布包，所以**框架侧的修复它吃不到**：要么就地做一份等价实现
+（幂等，新旧包都对），要么用包里已有的 API。给框架加新参数前先看完这张表，
+否则会编译失败。（2026-10-06 勘误：这里原先写成"`samples/*` 都是 NuGet 包、
+只有 `UwpApp` 是 ProjectReference"，漏了 Gallery 走源码——那条结论会把人引错方向：
+Gallery 恰恰是能立刻拿到框架侧 `Trace` / 闸门计数的那一个。）
 
 **就地实现是欠债，不是解法**：等含该修复的版本发到 nuget.org、示例把版本号升上来，
 就必须删掉那份就地实现。留着会变成"框架改了、这里没改"的两处不一致——
@@ -296,10 +305,12 @@ for n in ['SelectionRestore','ShouldExpectEcho','CancelIfUnconsumed']:
    `ToggleSwitch.IsOn` / `RadioButtons.SelectedIndex`——它自己就是最大的干扰源，
    日志里那些"状态在变"极可能只是自检在拨。观测一律只读；
    要"不手动点也能取证"就给控件挂**只读**的事件监听，记录事件当下控件自己报的值。
-4. **示例用的是 NuGet 包，不是工程引用**（`samples/*/Reactor.Template.csproj`
-   里是 `PackageReference Reactor.Uwp`）。加在 `Reactor.uwp/` 里的 `Trace`
-   在示例里**根本不会执行**——日志里看不到不是"没触发"，是"没编进去"。
-   要观测示例，埋点必须落在示例自己的源码里；只有 `UwpApp`（`ProjectReference`）才会带框架侧日志。
+4. **埋点有没有编进去，取决于引用方式**：`Reactor.Template` 是
+   `PackageReference Reactor.Uwp`，加在 `Reactor.uwp/` 里的 `Trace`
+   在**它**里面根本不会执行——日志里看不到不是"没触发"，是"没编进去"。
+   `Reactor.Gallery` 与 `UwpApp` 都是 `ProjectReference`，框架侧日志照常出来。
+   （上一版的写法"示例用的就是 NuGet 包、只有 UwpApp 才有框架侧日志"漏了 Gallery，
+   会让人在 Gallery 里白等框架日志。）
 
 ---
 

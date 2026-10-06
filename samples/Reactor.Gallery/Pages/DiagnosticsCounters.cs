@@ -18,7 +18,7 @@ namespace Reactor.Gallery.Pages;
 /// <para>
 /// 输入文本来自 <c>ReactorLog.Counters()</c>（<c>"echo: matched=… | ready: ready=…"</c>）。
 /// 那个格式一旦改，"永远零增量"就会伪装成"事件没到框架"——测试里那句
-/// "必须解析出全部八个键"就是为这个变化准备的哨兵。
+/// "必须解析出全部九个键"就是为这个变化准备的哨兵。
 /// </para>
 /// </remarks>
 internal static class DiagnosticsCounters
@@ -38,7 +38,7 @@ internal static class DiagnosticsCounters
     /// 计数增量的人话版：把"涨了哪几项"翻成"这一发事件走到哪去了"。
     /// </summary>
     /// <remarks>
-    /// 一排数字要人对着记七个名字的含义，等于把工作量又推回给肉眼——所以这里直接给结论。
+    /// 一排数字要人对着记九个名字的含义，等于把工作量又推回给肉眼——所以这里直接给结论。
     /// 最难当场取证的那一档（用户操作被当成回声吞掉）落在 <c>matched</c> 上，单独点出来，
     /// 别让它混在一串数字里。
     /// </remarks>
@@ -62,7 +62,7 @@ internal static class DiagnosticsCounters
               "「框架正在写属性」的静默窗里（典型是改了 Minimum/Maximum 把受控值夹了）。" +
               "它不是用户输入，本来就该被挡下"
             : delta.Contains("alreadyLoaded+", StringComparison.Ordinal)
-            ? $"增量：{delta}　ℹ alreadyLoaded 涨了：这些控件在被登记时<b>已经在树上</b>了。" +
+            ? $"增量：{delta}　ℹ alreadyLoaded 涨了：这些控件在被登记时就已经在树上了。" +
               "旧写法到此会挂一个永远不会来的 Loaded、把控件永久留在未就绪；现在被探针救了回来"
             : $"增量：{delta}";
     }

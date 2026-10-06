@@ -15,11 +15,16 @@ namespace Reactor.Gallery.Pages;
 /// （这里拿 WinUI 2 的 <c>NumberBox</c> 举例），自己 new 一个挂进来：
 /// Reactor 只负责把它放进布局、并在卸载时收走，不参与子树内部更新。
 /// <para>
-/// <b>两个必须遵守的点</b>：
+/// <b>重建的唯一旋钮是 <c>Token</c></b>：
 /// <list type="bullet">
-///   <item>创建委托的<b>引用要稳定</b>——写成字段（像下面这样），不要在 Render 里
-///   每次 new 一个 lambda，否则引用变化会被当成换了控件。</item>
-///   <item>要重建控件就改 <c>Token</c>（这里用一个自增的 int），不要靠换委托。</item>
+///   <item>想换控件就改 <c>Token</c>（这里用一个自增的 int），不要靠换委托。</item>
+///   <item>反过来也不要误会"创建委托必须引用稳定"。这句话在
+///   <c>Reactor.uwp/Elements/Native.cs</c> 的注释里是这么写的，但<b>与实现不符</b>：
+///   <c>Internal/Handlers.Native.cs</c> 的 <c>Update</c> 只比
+///   <c>Equals(oldElement.Token, newElement.Token)</c>，<c>Factory</c> 引用不参与比较，
+///   所以在 Render 里直接写 <c>Native(() => new NumberBox{...})</c> 也不会每帧重建。
+///   这里写成字段是为了让"重建只可能来自 Token"这件事在代码里看得见，
+///   不是为了绕开那条不存在的限制。</item>
 /// </list>
 /// </para>
 /// </remarks>

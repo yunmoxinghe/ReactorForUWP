@@ -130,13 +130,24 @@ internal static class SelectionRestore
     /// 排到派发器上下一轮，把受控目标值写回控件。
     /// </summary>
     /// <param name="control">控件。</param>
+    /// <param name="pending">"本控件上有一笔待兑现的纠正"标记表（各 handler 自建）。</param>
     /// <param name="targets">该 handler 的受控目标表。</param>
     /// <param name="itemCount">控件当前的条目数（越界判断要用）。</param>
+    /// <param name="readIndex">读控件当前选中下标（兑现前复查要用）。</param>
     /// <param name="apply">写回动作（各 handler 自己的 <c>ApplySelectedIndex</c>）。</param>
+    /// <remarks>
+    /// <b><paramref name="pending"/> 为什么由调用方建、而不是本类静态持有。</b>
+    /// 它是"按控件建的表"，而按控件建的表有一条硬契约：<b>必须在
+    /// <c>Unmount</c> 里摘掉</c>（否则控件走了、条目还在）。本类不是 handler，
+    /// 没有 <c>Unmount</c> 这个时机；表放在各 handler 里，摘除就自然落在
+    /// 它们各自的 <c>Unmount</c> 里，这张表也就进了那条契约的视野。
+    /// </remarks>
     public static void Schedule<TControl>(
         TControl control,
+        WeakTable<TControl, bool> pending,
         WeakTable<TControl, SelectedTarget> targets,
         Func<TControl, int> itemCount,
+        Func<TControl, int> readIndex,
         Action<TControl, int> apply)
         where TControl : DependencyObject
     {
@@ -164,8 +175,20 @@ internal static class SelectionRestore
             return;
         }
 
+        pending[control] = true;
+
         _ = dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
         {
+            // 记号是一次性的：先看它还开不开，开着就吃掉。
+            // 关着 = 这期间来过一次真实选中（同一次手势的第二发），
+            // 那一笔已经把用户的选择交给了 state，这次纠正已经过时。
+            if (!pending.TryGetValue(control, out var armed) || !armed)
+            {
+                return;
+            }
+
+            pending[control] = false;
+
             // 回写是异步的：这中间可能已经 Unmount（目标被清掉），
             // 也可能受控值已经被改过。两种情况都不要再动手。
             if (!targets.TryGetValue(control, out var now) || now is null || now.Index != expected)
@@ -173,9 +196,52 @@ internal static class SelectionRestore
                 return;
             }
 
+            // 兑现前最后一道复查：控件此刻若停在一个"有主人"的值上
+            // （非负、且不等于受控目标），那就是用户<b>刚选的</b>值——
+            // 覆盖它正是"点了弹回原样"。真机事故里
+            // <c>受控下发 ComboBox#5: 1 → 0</c> 就是这一笔：控件当时是 1，
+            // 写进去的是 0。第二发若被别道闸吞掉（例如控件尚未 Loaded），
+            // <see cref="Cancel"/> 就不会被调用，只剩这道复查能挡住它。
+            // 停在 -1 上才是"取消选中"该纠正的形状。
+            var current = readIndex(control);
+
+            if (current >= 0 && current != expected)
+            {
+                ReactorLog.Gate(
+                    $"{typeof(TControl).Name} 纠正收手：控件停在 {current}" +
+                    $"（受控目标是 {expected}）—— 那是用户刚选的值");
+                return;
+            }
+
             apply(control, expected);
         });
     }
+
+    /// <summary>
+    /// 作废这个控件上还没兑现的纠正。
+    /// </summary>
+    /// <remarks>
+    /// <b>2026-10 事故的直接修复点。</b>"取消选中"这一发被吞时排下的纠正，
+    /// 只有在<b>它确实是一次完整手势</b>时才该兑现——典型是"点当前已选中项"：
+    /// 控件被拨到 -1，之后没有第二发，得靠纠正拉回受控值。
+    /// <para>
+    /// 但 <c>ComboBox</c>（以及一切 <c>Selector</c>）一次手势会抛<b>两发</b>：
+    /// 先取消旧的、再选中新的，而且到达顺序没有保证
+    /// （见 <c>SelectionGate</c> 类注释）。第一发排下的纠正如果照常兑现，
+    /// 就会把用户刚选的值覆盖回受控旧值——真机日志
+    /// <c>受控下发 ComboBox#5: 1 → 0</c> 就是这一笔：
+    /// 控件当时是用户选的 1，写进去的是旧值 0，而全程<b>没有任何一次用户回调</b>
+    /// 落地（回调永远等不到，因为控件已经被改回去了）。
+    /// </para>
+    /// <para>
+    /// 所以每放行一发真实选中，就把该控件上待兑现的纠正作废。
+    /// 判据是"之后有没有真实选中"，不是"目标值变没变"——后者在这条链路上
+    /// 永远为假（回调没触发 ⇒ state 没变 ⇒ 目标没变 ⇒ 旧的复查放行 ⇒ 盖掉用户选择）。
+    /// </para>
+    /// </remarks>
+    public static void Cancel<TControl>(TControl control, WeakTable<TControl, bool> pending)
+        where TControl : DependencyObject
+        => pending[control] = false;
 }
 
 /// <summary>下拉框。</summary>
@@ -199,6 +265,7 @@ internal sealed class ComboBoxHandler : ElementHandler<ComboBoxElement, ComboBox
 
     /// <summary>正在整批重建 items：期间的选中事件是 Selector 的副作用，不是用户操作。</summary>
     private static readonly WeakTable<ComboBox, bool> Rebuilding = new();
+    private static readonly WeakTable<ComboBox, bool> RestorePending = new();
 
     protected override ComboBox Mount(Reconciler reconciler, ComboBoxElement element)
     {
@@ -257,6 +324,7 @@ internal sealed class ComboBoxHandler : ElementHandler<ComboBoxElement, ComboBox
         Callbacks.Remove(control);
         Targets.Remove(control);
         Rebuilding.Remove(control);
+        RestorePending.Remove(control);
     }
 
     /// <summary>
@@ -386,11 +454,21 @@ internal sealed class ComboBoxHandler : ElementHandler<ComboBoxElement, ComboBox
             if (SelectionGate.ShouldRestoreAfterSuppress(verdict))
             {
                 ReactorLog.Gate($"ComboBox{tag} 纠正回受控值（控件停在 {value}）");
-                SelectionRestore.Schedule(control, Targets, c => c.Items.Count, ApplySelectedIndex);
+                // 登记在 handler 自己这里：这张表按控件建，摘除也要落在
+                // 本类的 Unmount 里（契约要求"登记—摘除"成对出现在同一类）。
+                RestorePending[control] = true;
+                SelectionRestore.Schedule(
+                    control, RestorePending, Targets,
+                    c => c.Items.Count, c => c.SelectedIndex, ApplySelectedIndex);
             }
 
             return;
         }
+
+        // 走到这里的是一次真实选中：同一手势早先（"取消选中"那一发）排下的纠正
+        // 到此作废——它若照常兑现，会把用户刚选的值覆盖回受控旧值。
+        // 详见 SelectionRestore.Cancel 的注释（真机事故：ComboBox#5: 1 → 0）。
+        SelectionRestore.Cancel(control, RestorePending);
 
         ReactorLog.Pass($"ComboBox{tag} → 用户回调 SelectedIndex={value}");
         callback?.Invoke(value);
@@ -661,6 +739,7 @@ internal sealed class RadioButtonsHandler : ElementHandler<RadioButtonsElement, 
     /// （cpp:518 那句无条件 <c>Select(-1)</c>），不是用户操作。
     /// </summary>
     private static readonly WeakTable<MuxControls.RadioButtons, bool> Rebuilding = new();
+    private static readonly WeakTable<MuxControls.RadioButtons, bool> RestorePending = new();
 
     protected override MuxControls.RadioButtons Mount(
         Reconciler reconciler,
@@ -717,6 +796,7 @@ internal sealed class RadioButtonsHandler : ElementHandler<RadioButtonsElement, 
         Callbacks.Remove(control);
         Targets.Remove(control);
         Rebuilding.Remove(control);
+        RestorePending.Remove(control);
     }
 
     /// <summary>
@@ -851,11 +931,18 @@ internal sealed class RadioButtonsHandler : ElementHandler<RadioButtonsElement, 
             if (SelectionGate.ShouldRestoreAfterSuppress(verdict))
             {
                 ReactorLog.Gate($"RadioButtons{tag} 纠正回受控值（控件停在 {value}）");
-                SelectionRestore.Schedule(control, Targets, c => c.Items.Count, ApplySelectedIndex);
+                // 登记在 handler 自己这里：这张表按控件建，摘除也要落在
+                // 本类的 Unmount 里（契约要求"登记—摘除"成对出现在同一类）。
+                RestorePending[control] = true;
+                SelectionRestore.Schedule(
+                    control, RestorePending, Targets,
+                    c => c.Items.Count, c => c.SelectedIndex, ApplySelectedIndex);
             }
 
             return;
         }
+
+        SelectionRestore.Cancel(control, RestorePending);
 
         ReactorLog.Pass($"RadioButtons{tag} → 用户回调 SelectedIndex={value}");
         callback?.Invoke(value);
@@ -1098,6 +1185,7 @@ internal abstract class ItemsViewHandler<TElement, TControl> : ElementHandler<TE
     /// 这一发不关用户的事，放着不管就等于"换一次数据源，回调白跑一次"。
     /// </remarks>
     private static readonly WeakTable<TControl, bool> Rebuilding = new();
+    private static readonly WeakTable<TControl, bool> RestorePending = new();
 
     protected abstract IReadOnlyList<Element?> ItemsOf(TElement element);
     protected abstract Optional<int> SelectedIndexOf(TElement element);
@@ -1197,6 +1285,7 @@ internal abstract class ItemsViewHandler<TElement, TControl> : ElementHandler<TE
         Callbacks.Remove(control);
         Targets.Remove(control);
         Rebuilding.Remove(control);
+        RestorePending.Remove(control);
     }
 
     /// <summary>把受控值落到控件上。<b>没有值时要清掉登记</b>——否则控件已经不受控了。</summary>
@@ -1289,11 +1378,18 @@ internal abstract class ItemsViewHandler<TElement, TControl> : ElementHandler<TE
             if (SelectionGate.ShouldRestoreAfterSuppress(verdict))
             {
                 ReactorLog.Gate($"{tag} 纠正回受控值（控件停在 {value}）");
-                SelectionRestore.Schedule(control, Targets, c => c.Items.Count, ApplySelectedIndex);
+                // 登记在 handler 自己这里：这张表按控件建，摘除也要落在
+                // 本类的 Unmount 里（契约要求"登记—摘除"成对出现在同一类）。
+                RestorePending[control] = true;
+                SelectionRestore.Schedule(
+                    control, RestorePending, Targets,
+                    c => c.Items.Count, c => c.SelectedIndex, ApplySelectedIndex);
             }
 
             return;
         }
+
+        SelectionRestore.Cancel(control, RestorePending);
 
         ReactorLog.Pass($"{tag} → 用户回调 SelectedIndex={value}");
         callback?.Invoke(value);

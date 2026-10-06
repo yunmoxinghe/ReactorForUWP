@@ -16,28 +16,13 @@ public sealed class CoreLoopRegression : Component
     {
         var (backdrop, setBackdrop) = UseState(BackdropKind.None);
 
-        var options = new (BackdropKind Kind, string Label)[]
-        {
-            (BackdropKind.None, "无"),
-            (BackdropKind.Mica, "云母"),
-            (BackdropKind.MicaAlt, "云母Alt"),
-            (BackdropKind.DesktopAcrylic, "亚克力"),
-            (BackdropKind.AcrylicThin, "亚克力Thin"),
-        };
-
-        var buttons = new List<Element?>();
-        foreach (var (kind, label) in options)
-        {
-            buttons.Add(Button(
-                kind == backdrop ? $"> {label}" : label,
-                () => setBackdrop(kind)));
-        }
-
+        // 材质按钮组复用 ElementGallery.BackdropButtons：五个可选材质只该有一份清单，
+        // 抄两份就一定会有一份先过时。以前这里还每帧就地 new 一遍数组 + List<Element?>。
         return ScrollViewer(
             VStack(
                 TextBlock("A4.5 回归验证"),
                 TextBlock($"[5] 背景材质（当前: {backdrop}）"),
-                HStack(buttons.ToArray()),
+                HStack(ElementGallery.BackdropButtons(backdrop, setBackdrop)),
                 // 材质不生效时的自检：NO 即为该条件命中静默回退。
                 TextBlock($"    自检: {Reactor.Uwp.Hosting.BackdropDiagnostics.Report()}"),
                 TextBlock("    亚克力若只显示橙红色 = 命中 FallbackColor（回退）"),

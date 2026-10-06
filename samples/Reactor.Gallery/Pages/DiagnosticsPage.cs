@@ -83,7 +83,7 @@ public sealed class DiagnosticsPage : Component
             () =>
             {
                 var probe = LiveProbe.Snapshot();
-                var verdict = Verdict(radio, folded, combo, sound, probe);
+                var verdict = Verdict(radio, folded, combo, sound, crumbCount, probe);
 
                 // 每帧一行"state + 控件实际值"。这是把日志变成完整因果链的最后一段：
                 // 事件(Pass) → setState → 帧(Render) → 控件实际值(这里)。
@@ -102,7 +102,8 @@ public sealed class DiagnosticsPage : Component
                 {
                     ReactorLog.Warn(
                         ReactorLogChannel.Render,
-                        $"state 与控件不一致：{verdict.Text}（state: {radio}/{folded}/{combo}/{sound}）");
+                        $"state 与控件不一致：{verdict.Text}（state: " +
+                        $"{radio}/{folded}/{combo}/{sound}/{Math.Min(crumbCount, Crumbs.Length)}）");
                 }
 
                 var text = probe.Text + Environment.NewLine + verdict.Text;
@@ -111,7 +112,26 @@ public sealed class DiagnosticsPage : Component
                     setSnap(text);
                 }
             },
-            new object[] { radio, folded, combo, sound, tick });
+            // 依赖必须是<b>闭包里读到的每一个 state</b>：少一个，那一项的帧就整帧
+            // 不进日志、不进判定、快照也不刷新——上面那句"因果链的最后一环"就断了，
+            // 而断的方式是<b>安静的</b>（页面照常显示，只是这一项永远停在旧值），
+            // 正是最难发现的一类。⑤ 的 crumb / crumbCount 之前就漏在这儿，
+            // 于是 ⑤ 这一组控件实际上<b>完全没被诊断覆盖</b>：点了不加日志、不改判定、
+            // 换数据源也不复采样——而它恰好是页面上唯一用来验证"每次下发都换数据源
+            // 引用"的那组。
+            // <para>
+            // 回调计数也要进依赖：受控控件重复选中同一项时 value 不变，只有计数涨，
+            // 不在依赖里的话那一次点击连一行都没有，"回调到底来了没"就只能靠猜。
+            // </para>
+            new object[]
+            {
+                radio, radioHits,
+                folded, foldedHits,
+                combo, comboHits,
+                sound, soundHits,
+                crumb, crumbHits, crumbCount,
+                tick,
+            });
 
         // 轮询让读数持续更新。<b>闭包陷阱</b>：这里的 pulse 是这一帧的值，写
         // setPulse(pulse + 1) 的话每次算出的都是同一个数，只有第一次会更新；
@@ -304,7 +324,7 @@ public sealed class DiagnosticsPage : Component
     /// </para>
     /// </remarks>
     private static (bool Bad, string Text) Verdict(
-        int radio, int folded, int combo, bool sound, LiveProbe.ProbeResult p)
+        int radio, int folded, int combo, bool sound, int crumbCount, LiveProbe.ProbeResult p)
     {
         var sb = new StringBuilder("判定 state→控件：");
         var bad = false;
@@ -323,6 +343,13 @@ public sealed class DiagnosticsPage : Component
         Add(Cmp("②", folded, At(p.RadioIndex, 1)));
         Add(Cmp("③", combo, At(p.ComboIndex, 0)));
         Add(Cmp("④", sound, Flag(p.ToggleOn, 0)));
+
+        // ⑤ 判的是<b>条数</b>而不是"选中项"：面包屑没有可持续的选中态，
+        // 它的受控属性其实是 ItemsSource —— 而这一项正是 SectionHeader 之外
+        // 唯一用引用相等判断换没换的通道（WinUI 内部 ItemsRepeater 的规矩）。
+        // 所以"state→控件"在这里的等价命题是：我声明了几层，树上就得渲染出几个条目。
+        // 少一个 = 新数据源没被接受 = 上面那句"面包屑不见"复发，且能直接看出来。
+        Add(Cmp("⑤", Math.Min(crumbCount, Crumbs.Length), At(p.BarItems, 0)));
 
         return (bad, sb.ToString());
     }

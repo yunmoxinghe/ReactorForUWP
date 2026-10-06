@@ -259,6 +259,16 @@ internal sealed class ControlledSelectionSim
     /// <summary>完整时序，失败时用来定位断点。</summary>
     public IReadOnlyList<string> Trace => _trace;
 
+    /// <summary>
+    /// 回写<b>真的落地</b>的次数（跨实例累计，仅供反向对照读数）。
+    /// </summary>
+    /// <remarks>
+    /// 静态累计是为了让"某一道复查有没有用"这个问题可以量化回答：
+    /// 关掉它之后，这个数必须变大。<b>最终值看不出差别</b>——回写后面紧跟的
+    /// 一轮渲染会把控件拉回最新目标，所以只能数次数。
+    /// </remarks>
+    public static int RestoreWriteBackCount;
+
     /// <summary>控件是否已经 Loaded（随机序列里避免重复 Load）。</summary>
     public bool IsLoaded { get; private set; }
 
@@ -289,6 +299,37 @@ internal sealed class ControlledSelectionSim
     /// </para>
     /// </remarks>
     public bool RestoreWithoutListener { get; init; } = true;
+
+    /// <summary>
+    /// 放行一发真实选中时，要不要<b>作废</b>该控件上待兑现的纠正。<b>默认开</b>——
+    /// 它就是"设置项点了不生效"的修法之一。
+    /// </summary>
+    /// <remarks>
+    /// <c>ComboBox</c>（以及一切 <c>Selector</c>）一次手势抛两发：先取消旧的、
+    /// 再选中新的，到达顺序没有保证。第一发被判"取消选中"时会排一次纠正；
+    /// 若第二发到来时不把它作废，那一笔纠正就会把用户刚选的值覆盖回受控旧值——
+    /// 真机日志 <c>受控下发 ComboBox#5: 1 → 0</c> 就是这一笔（控件当时是 1，
+    /// 写进去的是 0，全程没有一次用户回调落地）。
+    /// <para>
+    /// 关掉它必须红（INV11 的反向对照）。
+    /// </para>
+    /// </remarks>
+    public bool CancelRestoreOnRealSelect { get; init; } = true;
+
+    /// <summary>
+    /// 纠正兑现前要不要拦一道"控件此刻停在用户刚选的值上"。<b>默认开</b>。
+    /// </summary>
+    /// <remarks>
+    /// <see cref="CancelRestoreOnRealSelect"/> 只在第二发<b>真的被放行</b>时才够用。
+    /// 若第二发被别道闸吞掉（例如控件还没 <c>Loaded</c>），作废就不会发生，
+    /// 只剩这道复查能挡住覆盖：控件停在一个<b>非负且不等于受控目标</b>的值上
+    /// ⇒ 那是用户刚选的，纠正必须收手；停在 -1 ⇒ 才是"取消选中"该纠正的形状。
+    /// <para>
+    /// 两道一起才构成完整防护——只对一道写用例，另一道就会在没有回归保护的情况下
+    /// 被后来的重构拿掉。
+    /// </para>
+    /// </remarks>
+    public bool GuardRestoreOnUserValue { get; init; } = true;
 
     /// <summary>
     /// 复现<b>旧</b>行为：受控写入<b>无条件</b>登记回声期望（默认 false，即已修）。
@@ -500,15 +541,22 @@ internal sealed class ControlledSelectionSim
         {
             rounds++;
 
+            // <b>纠正排在渲染之前。</b>真机上是两条独立队列，谁先排谁先跑：
+            // 纠正在"取消选中"那一发就排下了（手势的开头），渲染要等第二发的
+            // 回调 setState 之后才排（手势的末尾）。
+            // 曾经这里是先渲染后纠正——顺序反了，于是"纠正覆盖用户选择"这条
+            // 链路在仿真里永远走不到：渲染先把受控目标改成了用户选的值，
+            // 纠正再拿它跟 expected 一比就自动丢弃了。<b>顺序反着建模，
+            // 等于给 bug 发了免死金牌。</b>
+            if (_restorePending)
+            {
+                RunRestore();
+            }
+
             if (_pending)
             {
                 _pending = false;
                 ApplyControlled();
-            }
-
-            if (_restorePending)
-            {
-                RunRestore();
             }
         }
 
@@ -591,6 +639,21 @@ internal sealed class ControlledSelectionSim
             return;
         }
 
+        // 兑现前最后一道复查（对应 SelectionRestore 异步体里的
+        // `if (current >= 0 && current != expected) return;`）：
+        // 控件此刻停在一个"有主人"的值上 ⇒ 那是用户刚选的，覆盖它就是"点了弹回原样"。
+        // 第二发若被别道闸吞掉，作废（CancelRestoreOnRealSelect）不会发生，
+        // 只剩这道复查挡得住。
+        if (GuardRestoreOnUserValue && _ctl.SelectedIndex >= 0)
+        {
+            _trace.Add($"  restore#{expected} 收手（控件停在用户选的 {_ctl.SelectedIndex}）");
+            return;
+        }
+
+        // 回写真的落地了：这是"多写一次旧值"的可观测后果。
+        // 它未必改变最终值（紧随其后的渲染会把控件拉回新目标），
+        // 但界面上多了一帧抖动——所以反向对照数的是<b>次数</b>，不是最终值。
+        RestoreWriteBackCount++;
         _trace.Add($"  restore → {expected}");
 
         // 真实 ApplySelectedIndex(control, index) 会同时把目标记录写成 index。
@@ -633,6 +696,12 @@ internal sealed class ControlledSelectionSim
             if (SelectionGate.Suppress(silentVerdict))
             {
                 return;
+            }
+
+            if (CancelRestoreOnRealSelect && _restorePending)
+            {
+                _restorePending = false;
+                _trace.Add("  真实选中（无人接）→ 作废排队的回写");
             }
 
             // 走到这里的是"真用户的选中"：没回调 ⇒ 转告不了 state，
@@ -685,6 +754,12 @@ internal sealed class ControlledSelectionSim
              }
 
             return;
+        }
+
+        if (CancelRestoreOnRealSelect && _restorePending)
+        {
+            _restorePending = false;
+            _trace.Add($"  真实选中 {value} → 作废排队的回写");
         }
 
         CallbackCount++;

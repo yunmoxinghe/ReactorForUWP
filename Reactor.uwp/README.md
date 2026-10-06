@@ -65,7 +65,7 @@ IME / selection replacement 会连发多个 `TextChanged`，无条件删除登�
 ## 安装
 
 ```xml
-<PackageReference Include="Reactor.Uwp" Version="0.1.0-alpha.5" />
+<PackageReference Include="Reactor.Uwp" Version="0.1.0-alpha.7" />
 ```
 
 消费方项目要求（与本机工程一致）：
@@ -142,16 +142,22 @@ manifest 里把入口指向这个类：
 
 ## 状态
 
-`0.1.0-alpha.6`。已验证的核心链路：纯 C# 启动与 WinUI 2 资源加载、元素 diff/patch、
+`0.1.0-alpha.7`。已验证的核心链路：纯 C# 启动与 WinUI 2 资源加载、元素 diff/patch、
 Frame 导航与过渡、设置页（SettingsCard / SettingsExpander）、
 ItemsRepeater 虚拟化（含回收不变量校验）、
 受控属性闭环（回声抑制 / 吞后纠正 / 越界守卫 / 就绪闸，逐条有仿真与反向对照）。
 
-受控属性这一块是 alpha.6 的重点，修的是同一类症状——"点了没反应"——的若干个不同面孔：
+受控属性这一块是 alpha.6 / alpha.7 的重点，修的是同一类症状——"点了没反应"——的若干个不同面孔：
 受控写回被当成用户输入回调出去、吞掉"取消选中"后没把控件纠正回来、
-受控纠正被绑到"有没有人监听"上、以及 ListView / GridView 此前一份受控设施都没接。
+受控纠正被绑到"有没有人监听"上、ListView / GridView 此前一份受控设施都没接，
+以及 alpha.7 修的"纠正盖掉用户刚选的新值"（一次点击是**两发**手势：`-1` 与新值，
+第一发排的纠正会在第二发之后兑现，把新值写成原值）。
 每条修法都做成开关，关掉后同一批 20000 条随机序列必须失败；
-另外有四道源码级契约守着接线不被照抄漏掉（详见 `docs/release-notes/alpha.6.md`）。
+另外有四道源码级契约守着接线不被照抄漏掉（详见 `docs/release-notes/alpha.6.md`、
+`docs/release-notes/alpha.7.md`）。
+
+alpha.7 在**真机**上验过：Template 内置自检（`LocalState\probe-page.txt` 写 `settings` 才跑）
+在真实控件上跑完整手势与"勾单个 RadioButton"，报告落 `selftest.log`。
 
 未做：NuGet 上的正式版、xml 文档。**AOT 发布在本机尚未打通**——
 `reg.exe` 被安全策略拦掉，链接器拿不到 Windows SDK 那半截 `LIB`（`LNK1181: advapi32.lib`），

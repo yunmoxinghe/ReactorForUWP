@@ -12,7 +12,12 @@
     <Platform Solution="*|x86" Project="x86" />
     <Deploy />
   </Project>
-  <!-- 两个示例都装 NuGet 包而不是引用框架源码。
+  <!-- 引用方式刻意分成两种，别在文档里说成一种：
+       · Reactor.Template = PackageReference（装 NuGet 包）：编译通过即证明发布出去的
+         公共 API 够写一个小应用，是"对外承诺"的验证。
+       · Reactor.Gallery / UwpApp = ProjectReference（引用框架源码）：这两个要用尚未
+         发版的内部观测 API（ReactorLog 通道、闸门计数、Reactor.Uwp.Internal），
+         改完框架立刻能看效果。
        平台与 csproj 的 Platforms（x64;arm64）对应，arm64 需要 Reactor.Uwp >= alpha.4。 -->
   <Project Path="samples/Reactor.Template/Reactor.Template.csproj">
     <Platform Solution="*|x64" Project="x64" />

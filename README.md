@@ -85,7 +85,7 @@ public sealed class CounterPage : Component
 | `UwpApp/` | 测试壳：压测 M0~M5、虚拟列表 / Echo 实验室、CoreLoop 回归、元素画廊，一次部署点菜单跑完 |
 | `tests/` | 控制台用例（EchoGuard、虚拟列表身份、Hook、Context），不需要开 App |
 | `diag-run.ps1` | 无人值守压测：构建 → 同步产物 → 启动 → 等本轮跑完 → 打印 summary |
-| `samples/` | 示例：`Reactor.Template`（起点模板）+ `Reactor.Gallery`（8 个主题页），都只装 NuGet 包不引用框架源码，见 `samples/README.md` |
+| `samples/` | 示例：`Reactor.Template`（起点模板，走 `PackageReference`）+ `Reactor.Gallery`（9 个主题页，走 `ProjectReference`）——两者引用框架的方式刻意不同，理由与代价见 `samples/README.md` |
 | `tools/` | 辅助脚本 |
 
 ## 跑起来

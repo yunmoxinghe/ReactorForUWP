@@ -60,7 +60,12 @@ public sealed class TestShellApp : Component
 
     public override Element Render()
     {
-        var (index, setIndex) = UseState(InitialIndex());
+        // <c>InitialIndex()</c> 要读一次 <c>LocalState\probe-mode.txt</c>。直接写
+        // <c>UseState(InitialIndex())</c> 的话实参<b>每帧都会求值</b>，而 use state
+        // 只在挂载那一帧认它——每点一次菜单就白读一次文件（还裹着 try/catch）。
+        // 用 <c>UseMemo</c> 把种子钉成"进程生命周期一次"，再交给 use state。
+        var seed = UseMemo(InitialIndex);
+        var (index, setIndex) = UseState(seed);
 
         return NavigationView(
             content: Frame(Cases[index].Build()),

@@ -23,7 +23,13 @@ public sealed class GettingStartedPage : Component
         return ScrollViewer(
             VStack(12,
                 TextBlock("快速开始").FontSize(20),
-                TextBlock("这个示例项目不引用框架源码，只装 NuGet 包 Reactor.Uwp。").Caption(),
+                // 别把引用方式说反：Gallery 走的是 ProjectReference（改完框架立刻能看效果），
+                // 只有 Reactor.Template 才按 NuGet 包引用。写成"只装 NuGet 包"的话，
+                // 后来那个人会以为这份示例跑的就是发布出去的位——一旦两者行为不一致
+                // （正是"同样代码在 Gallery 里对、在 Template 里坏"那种阴阳脸），
+                // 排查方向会直接被引到框架以外去。
+                TextBlock("Gallery 直接 ProjectReference 框架源码；想看只装 NuGet 包的写法，看 Reactor.Template。")
+                    .Caption(),
 
                 // When：条件成立才渲染，否则是 Empty（连占位控件都不建）。
                 When(showBar, () => InfoBar($"计数：{count}")),

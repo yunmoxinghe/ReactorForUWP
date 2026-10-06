@@ -5088,7 +5088,7 @@ internal static class EchoContractTests
             "命中数骤降 = 改了正则或换了写法，这条契约正在悄悄失聪");
 
         Program.Check(
-            $"三件套都作用在<b>同一个</b>控件上（实测 {violations.Count} 处不是）",
+            $"三件套都作用在「同一个」控件上（实测 {violations.Count} 处不是）",
             violations.Count == 0,
             violations.Count == 0
                 ? null

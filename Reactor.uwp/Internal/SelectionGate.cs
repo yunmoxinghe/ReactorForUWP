@@ -88,6 +88,45 @@ internal static class SelectionGate
     }
 
     /// <summary>该判定是否要吞掉这一发事件。</summary>
+    /// <remarks>
+    /// <b>官方版（<c>microsoft-ui-reactor</c>）在这里只吞两道，我们吞四道——
+    /// 差别是有原因的，别照抄成任意一边。</b>
+    /// <para>
+    /// 官方受控选中链路的事件入口只有两道守卫。以 <c>ComboBox</c> 为例，trampoline
+    /// 全文是（<c>src/Reactor/Core/Element.cs</c>，<c>ComboBoxElement</c>）：
+    /// <code>
+    /// var cb = (WinUI.ComboBox)s!;
+    /// if (!Reconciler.TryGetReactorState(cb, out var state)) return;
+    /// if (ChangeEchoSuppressor.ShouldSuppressEcho(state, cb.SelectedIndex)) return;
+    /// (state.Element as ComboBoxElement)?.OnSelectedIndexChanged?.Invoke(cb.SelectedIndex);
+    /// </code>
+    /// <c>RadioButtons</c> 走 <c>ControlledPropEntry.StaticTrampoline</c>
+    /// （<c>PropEntry.cs:277</c>），形状相同：<b>控件没挂上 → 返回；回声 → 吞；
+    /// 其余一律回调</b>。没有"取消选中"这道，也没有"未就绪"这道。
+    /// </para>
+    /// <para>
+    /// <b>官方敢不设这两道，是因为它回调出去的值是 <c>readBack(control)</c>
+    /// ——控件当前值，不是事件参数里的下标。</b>于是"取消选中"那一发回调出去的
+    /// 仍是控件当时的真值：同一手势的两发回调同一个值，<c>setState</c> 同值不重渲染，
+    /// 幂等无害。这一条我们<b>已经对齐</b>：三个 <c>Dispatch</c> 里
+    /// <c>value</c> 取的都是 <c>control.SelectedIndex</c>。
+    /// </para>
+    /// <para>
+    /// <b>我们多出来的两道，对应的是我们比官方多的那一件事：排队纠正。</b>
+    /// 官方没有"纠正"这个动作，收敛完全靠下一轮渲染
+    /// （<c>PropEntry.Update</c>：<c>current == nv</c> 就不写，否则 arm 后裸写）。
+    /// 我们有 <see cref="ShouldRestoreAfterSuppress"/>，于是"取消选中"必须被拦住，
+    /// 否则纠正会对着一次真实手势的中间态动手。
+    /// </para>
+    /// <para>
+    /// <b>2026-10 事故：这两道本身没错，错的是纠正的陈旧判据。</b>真机日志
+    /// <c>受控下发 ComboBox#5: 1 → 0</c>——控件当时是用户刚选的 1，写进去的是受控
+    /// 旧值 0，那一笔正是"取消选中"排下的纠正。原因见
+    /// <c>SelectionRestore.Schedule</c>：它只复查"受控目标变没变"，
+    /// 而回调没触发 ⇒ 目标没变 ⇒ 复查放行 ⇒ 把用户的选择盖掉。
+    /// <b>修的是 <c>Schedule</c> 的复查，不是这道闸。</b>
+    /// </para>
+    /// </remarks>
     public static bool Suppress(SelectionVerdict verdict) => verdict != SelectionVerdict.Pass;
 
     /// <summary>
@@ -122,6 +161,29 @@ internal static class SelectionGate
     /// 被吞掉的这一发，要不要<b>排队纠正回受控值</b>。
     /// </summary>
     /// <remarks>
+    /// <b>2026-10：这道保留，但它的兑现条件被收紧了——见
+    /// <c>SelectionRestore.Schedule</c>。</b>
+    /// <para>
+    /// 官方版<b>没有这一道</b>：它的受控收敛只发生在渲染路径
+    /// （<c>PropEntry.Update</c>：<c>current == nv</c> 就不写，否则 arm 一次
+    /// value-diff 期望后裸写；写完若发现值没变就撤销 arm）。代价是"点已选中项
+    /// 把控件打到 -1"这类情形只能等下一次 state 变化才拉回，state 不变就一直停着；
+    /// 我们不愿接受那个窗口，所以有这一道。
+    /// </para>
+    /// <para>
+    /// <b>但它差点成为"设置项点了不生效"的元凶。</b>ComboBox 一次手势发两发：
+    /// 第一发（取消选中）被判 <c>CancelTransient</c> → 吞 + 排纠正 →
+    /// 纠正把用户刚选的值覆盖回受控旧值 → 第二发（真选中）到达时控件已是旧值，
+    /// 回调再也不触发。真机日志 <c>受控下发 ComboBox#5: 1 → 0</c> 就是那一次覆盖
+    /// 本人，全程没有一次用户回调落地。
+    /// </para>
+    /// <para>
+    /// 根因不在"要不要纠正"，而在纠正<b>凭什么认为自己还没过时</b>：它只比
+    /// "受控目标变没变"，而回调没触发 ⇒ 目标没变 ⇒ 它认为自己仍然有效。
+    /// 正确的判据是"控件值还停在排纠正那一刻吗"。已在
+    /// <c>SelectionRestore.Schedule</c> 里补上（INV11）。
+    /// </para>
+    /// <para>
     /// <b>签名里刻意没有 <c>hasCallback</c>。</b>这是它与本类其余判据最大的区别，
     /// 也是它单独存在的原因：纠正兑现的是<b>"这个属性由 state 说了算"这个承诺</b>，
     /// 而这份承诺是控件自己领下的，跟有没有人挂 <c>OnSelectedIndexChanged</c>

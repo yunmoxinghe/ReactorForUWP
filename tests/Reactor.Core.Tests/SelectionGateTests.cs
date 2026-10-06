@@ -35,6 +35,7 @@ internal static class SelectionGateTests
     {
         GateTruthTable();
         Invariants();
+        TwoPartGesture();
         Fuzz();
     }
 
@@ -125,15 +126,104 @@ internal static class SelectionGateTests
         Program.Expect("8 种写入情形下「登记」与「回声闸可达」完全一致", 0, mismatches);
     }
 
-    // ── 2. 闭环不变量 ──────────────────────────────────────────────
+    // ── 3. 两发手势 ────────────────────────────────────────────────
     /// <summary>
-    /// INV9：异步回写执行时若目标已经变过，必须收手——否则会把用户<b>此后的</b>选择整个盖回去。
+    /// INV11：一次手势抛两发（先取消、再选中）时，第一发排下的纠正<b>不得</b>
+    /// 覆盖用户刚选的值。
     /// </summary>
     /// <remarks>
-    /// 对应的真代码是 <c>SelectionRestore.Schedule</c> 异步体第一行
-    /// <c>now.Index != expected</c>。这道复查此前没有任何测试守着：
-    /// 仿真当年把回写简化成"和渲染共用同一个 pending 旗标"，执行时机永远紧跟下一次渲染，
-    /// 快照不可能陈旧——删掉那行一行代码也不会有一条测试变红。
+    /// 真机症状："设置项点了弹回原样、从来不落盘"。日志里的
+    /// <c>受控下发 ComboBox#5: 1 → 0</c> 就是那一笔覆盖。
+    /// <para>
+    /// 这道防线有<b>两条</b>，各自都要有反向对照：
+    /// <list type="number">
+    ///   <item>第二发放行时作废待兑现的纠正（<c>CancelRestoreOnRealSelect</c>）；</item>
+    ///   <item>纠正兑现前发现控件停在"用户刚选的值"上就收手
+    ///         （<c>GuardRestoreOnUserValue</c>）——第二发若被别道闸吞掉
+    ///         （例如控件还没 <c>Loaded</c>），第一条不会发生，只剩它挡着。</item>
+    /// </list>
+    /// </para>
+    /// </remarks>
+    private static void TwoPartGesture()
+    {
+        Program.Section("INV11 / 两发手势：纠正不得覆盖用户的选择");
+
+        ControlledSelectionSim Build(bool cancelRestore, bool guardUserValue)
+        {
+            var sim = new ControlledSelectionSim
+            {
+                CancelRestoreOnRealSelect = cancelRestore,
+                GuardRestoreOnUserValue = guardUserValue,
+            };
+
+            sim.Mount(0);
+            sim.Load();
+
+            // cancelFirst=true：先抛"取消选中"那一发（无实项），再抛真选中。
+            // 这正是 ComboBox 一次手势的形状。
+            sim.Click(2, cancelFirst: true);
+            sim.Drain();
+            return sim;
+        }
+
+        string Trace(ControlledSelectionSim sim) =>
+            string.Join(" | ", sim.Trace);
+
+        var ok = Build(cancelRestore: true, guardUserValue: true);
+        Program.Check(
+            "用户选的值进了 state",
+            ok.State == 2,
+            $"state={ok.State} trace={Trace(ok)}");
+        Program.Check(
+            "控件停在用户选的值上",
+            ok.ControlIndex == 2,
+            $"控件={ok.ControlIndex} trace={Trace(ok)}");
+        Program.Check(
+            "恰好一次回调，且回调值不是 -1",
+            ok.CallbackCount == 1 && !ok.CallbackValues.Contains(-1),
+            $"回调 {ok.CallbackCount} 次，值=[{string.Join(",", ok.CallbackValues)}] trace={Trace(ok)}");
+
+        // 反向对照一：两道都关掉，用户的选择必须被盖掉——否则这条用例没摸到病。
+        var broken = Build(cancelRestore: false, guardUserValue: false);
+        Program.Check(
+            "反向对照（两道全关）：确实发生了一次把旧值写回控件的动作",
+            BrokenWroteBack(broken) && !BrokenWroteBack(ok),
+            $"ok 回写={BrokenWroteBack(ok)} broken 回写={BrokenWroteBack(broken)} " +
+            $"trace={Trace(broken)}");
+
+        // 反向对照二：只留兑现前复查，也必须挡得住。
+        var guardOnly = Build(cancelRestore: false, guardUserValue: true);
+        Program.Check(
+            "反向对照（只留兑现前复查）：仍然挡住覆盖",
+            !BrokenWroteBack(guardOnly),
+            $"trace={Trace(guardOnly)}");
+
+        // 反向对照三：只留作废，同样要挡得住。两道各自都得证明自己有牙齿，
+        // 否则后来者会以为"留一道就够了"，把另一道删掉。
+        var cancelOnly = Build(cancelRestore: true, guardUserValue: false);
+        Program.Check(
+            "反向对照（只留作废）：仍然挡住覆盖",
+            !BrokenWroteBack(cancelOnly),
+            $"trace={Trace(cancelOnly)}");
+    }
+
+    // ── 2. 闭环不变量 ──────────────────────────────────────────────
+    /// <summary>
+    /// INV9：异步回写兑现前必须看清"控件此刻停在谁的值上"——否则会把用户<b>此后的</b>
+    /// 选择整个盖回去。
+    /// </summary>
+    /// <remarks>
+    /// 对应的真代码是 <c>SelectionRestore.Schedule</c> 异步体里那句
+    /// <c>if (current >= 0 && current != expected) return;</c>。
+    /// <para>
+    /// <b>2026-10：本条用例守的那道复查换人了。</b>原先守的是异步体第一行的
+    /// <c>now.Index != expected</c>（"受控目标变没变"），而它在真机这条链路上
+    /// <b>恒等于真、等于没检查</b>：受控目标要等下一轮渲染才更新，回写却排在渲染之前，
+    /// 于是它拿到的目标永远是排队那一刻的那个。用户"点了却弹回旧值"正是从这条缝
+    /// 漏出去的（真机日志 <c>受控下发 ComboBox#5: 1 → 0</c>）。
+    /// 现在守的是"控件当前值"这一道，旧的那一道仍在源码里（多一道无害），
+    /// 但<b>不能再把它当成这条链路的防线</b>。
+    /// </para>
     /// <para>
     /// 用户能看到的样子：<b>值自己弹回来了</b>——点了第 3 项，界面闪回第 1 项。
     /// 而且只在"上一次刚好点过当前选中项"之后复现，手点很难串起来。
@@ -143,7 +233,16 @@ internal static class SelectionGateTests
     {
         ControlledSelectionSim Build(bool dropStale)
         {
-            var sim = new ControlledSelectionSim { DropStaleRestore = dropStale };
+            // 关键是"兑现前复查"这一道。<b>"目标变没变"那道陈旧检查在这条链路上无效</b>：
+            // 受控目标要等下一轮渲染才更新，而回写排在渲染之前，
+            // 它拿到的目标<b>永远是排队的那一刻</b>——比较恒等于真，等于没检查。
+            // 真机上"用户点了却弹回旧值"正是从这条缝里漏出去的。
+            // 作废那一道也一并关掉，否则它会替复查挡下来，反向对照就成了假的绿。
+            var sim = new ControlledSelectionSim
+            {
+                GuardRestoreOnUserValue = dropStale,
+                CancelRestoreOnRealSelect = false,
+            };
             sim.Mount(0);
             sim.Load();
 
@@ -167,11 +266,28 @@ internal static class SelectionGateTests
             ok.State == 2 && ok.ControlIndex == 2,
             $"state={ok.State} 控件={ok.ControlIndex} trace={string.Join(" | ", ok.Trace)}");
 
+        // 反向对照看的是"回写有没有真的发生"，不是最终值：
+        // 回写之后紧跟的一轮渲染会把控件拉回新目标，最终值看不出差别，
+        // 但界面上多了一帧"值自己弹回去"的抖动——那就是用户在真机上看到的东西。
         Program.Check(
-            "INV9 反向对照：去掉陈旧检查后新选择确实被盖回去（证这道复查有用）",
-            broken.ControlIndex != 2,
-            "去掉复查也沒回退 —— 这个最小场景没摸到它，反向对照不成立，trace=" +
-            string.Join(" | ", broken.Trace));
+            "INV9 反向对照：去掉陈旧检查后确实多写了一次旧值（证这道复查有用）",
+            BrokenWroteBack(broken) && !BrokenWroteBack(ok),
+            $"ok 回写={BrokenWroteBack(ok)} broken 回写={BrokenWroteBack(broken)}，" +
+            $"trace={string.Join(" | ", broken.Trace)}");
+    }
+
+    /// <summary>这次仿真里，"回写真的落地"有没有发生过（看时序里的 <c>restore →</c>）。</summary>
+    private static bool BrokenWroteBack(ControlledSelectionSim sim)
+    {
+        foreach (var line in sim.Trace)
+        {
+            if (line.Contains("restore →"))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -533,18 +649,30 @@ internal static class SelectionGateTests
         // 第三条对照：去掉 SelectionRestore 里那句"目标被改过就别动手"。
         // 这道复查此前<b>没有任何测试守着</b>——仿真把回写简化成"跟渲染共用同一个 pending
         // 旗标"，执行时机永远紧跟下一次渲染，快照不可能陈旧，删掉那行也不会红。
+        ControlledSelectionSim.RestoreWriteBackCount = 0;
         var stale = RunSequences(
             writeBack: true, leakEcho: false, dropStale: false, restoreWithoutListener: true,
             report: false, silent: false, out _);
+        var staleWrites = ControlledSelectionSim.RestoreWriteBackCount;
 
+        ControlledSelectionSim.RestoreWriteBackCount = 0;
+        RunSequences(
+            writeBack: true, leakEcho: false, dropStale: true, restoreWithoutListener: true,
+            report: false, silent: false, out _);
+        var guardedWrites = ControlledSelectionSim.RestoreWriteBackCount;
+
+        // 对照的读数从"违约条数"改成"回写次数"：回写之后紧跟的一轮渲染会把控件
+        // 拉回最新目标，最终状态看不出差别，但每一次回写都是界面上一帧可见的抖动。
         Program.Check(
-            "反向对照：去掉异步回写的陈旧检查后同一批序列必须失败（证那道复查有用）",
-            stale > 0,
-            stale > 0
+            "反向对照：去掉异步回写的陈旧检查后回写次数必须变多（证那道复查有用）",
+            staleWrites > guardedWrites,
+            staleWrites > guardedWrites
                 ? null
-                : "去掉复查也全绿——这批序列区分不出它起没起作用，这道复查等于没有回归网");
+                : $"去掉复查后回写 {staleWrites} 次、留着也是 {guardedWrites} 次——" +
+                  "这批序列区分不出它起没起作用，这道复查等于没有回归网");
 
-        Console.WriteLine($"        去掉陈旧检查时同一批序列失败 {stale} 条");
+        Console.WriteLine(
+            $"        回写次数：留着陈旧检查 {guardedWrites} 次，去掉 {staleWrites} 次");
 
         // 第四条对照：退回旧写法——纠正被"有没有人监听"牵着走。
         // 这是本轮抓到的那一半：同一个吞法、同一种值丢失，
@@ -630,6 +758,8 @@ internal static class SelectionGateTests
                 LeakEchoRegistration = leakEcho,
                 SealEchoAfterWrite = !leakEcho,
                 DropStaleRestore = dropStale,
+                CancelRestoreOnRealSelect = false,
+                GuardRestoreOnUserValue = false,
                 RestoreWithoutListener = restoreWithoutListener,
             };
             var itemCount = 3;

@@ -56,7 +56,7 @@
 
   <ItemGroup>
     <!-- 新项目的起点：装包，然后把 App.cs / MainPage.cs 改成自己的。 -->
-    <PackageReference Include="Reactor.Uwp" Version="0.1.0-alpha.5" />
+    <PackageReference Include="Reactor.Uwp" Version="0.1.0-alpha.7" />
     <!-- 与 UWP-Blank-Template 一样把 WinUI 2 显式写出来：版本由项目自己钉，
          不依赖 Reactor.Uwp 传过来的那个。升级时改这里。 -->
     <PackageReference Include="Microsoft.UI.Xaml" Version="2.8.7" />

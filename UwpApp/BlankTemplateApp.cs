@@ -452,26 +452,33 @@ public sealed class BlankTemplateApp : Component
     /// 组标题：14px SemiBold + 下边距 6（模板里节标题的写法）。
     /// </summary>
     /// <remarks>
-    /// 边距放在<b>命名样式</b>里，本地不要再写一次 <c>.Margin(...)</c>：
-    /// 依赖属性优先级中本地值高于样式值，两者同时写同一个属性时样式里的边距会被完全覆盖。
+    /// <b>边距写本地值是刻意的，样式里不再抄一遍。</b>这里要按 <c>isFirst</c> 给两套值
+    /// （首组去掉顶部 32），而依赖属性优先级中<b>本地值高于样式值</b>——样式里一旦也写
+    /// <c>Margin</c>，那份就成了永远读不到的死数：有人改它，界面纹丝不动，
+    /// 排查时只会奔着"没生效"去找别的解释。单一事实来源放在这里。
+    /// （<c>samples/Reactor.Template/MainPage.cs</c> 的同名小节是同一个写法。）
     /// </remarks>
     private static Element SectionHeader(string text, bool isFirst = false) =>
         TextBlock(text)
             .ApplyStyle("SettingsSectionHeaderTextBlockStyle")
             // 模板给第一个标题单独写了 Margin="0,0,0,8"（去掉顶部 32）；
-            // 其余标题用样式里的 0,32,0,8。
+            // 其余标题在它上方留出 32 的组间距。
             .Margin(isFirst ? new Thickness(0, 0, 0, 8) : new Thickness(0, 32, 0, 8));
 
     /// <summary>
-    /// 节标题样式：<c>BodyStrongTextBlockStyle</c> + 下边距 6
+    /// 节标题样式：只负责在 <c>BodyStrongTextBlockStyle</c> 上叠字重，<b>不含边距</b>
     /// （对齐模板 <c>SettingsSectionHeaderTextBlockStyle</c>，重复定义以先定义者为准）。
     /// </summary>
+    /// <remarks>
+    /// 边距由 <see cref="SectionHeader"/> 给本地值，理由写在那里：<b>同一个属性不要两处都写</b>。
+    /// 之前这里写过一份 <c>0,32,0,8</c>，而 SectionHeader 自己也给了本地 Margin——
+    /// 样式那份从头到尾没被读过，改它界面纹丝不动。
+    /// </remarks>
     private static void DefineStyles()
     {
         StyleSheet.Define("SettingsSectionHeaderTextBlockStyle", b => b
             .Target<TextBlock>()
-            .BasedOn("BodyStrongTextBlockStyle")
-            .Margin(new Thickness(0, 32, 0, 8)));
+            .BasedOn("BodyStrongTextBlockStyle"));
     }
 
     private static async void OpenLink(string url)

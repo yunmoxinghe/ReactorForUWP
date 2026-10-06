@@ -9,7 +9,7 @@ namespace UwpApp;
 
 /// <summary>
 /// 无人值守复现"进设置页"：把自动置位（<c>BlankTemplateApp.AutoOpenSettings</c>）
-/// 做成一个页面組件，挂进来就等于"启动 1 秒后自动点一次设置项"。
+/// 做成一个页面组件，挂进来就等于"启动 1 秒后自动点一次设置项"。
 /// </summary>
 /// <remarks>
 /// 为什么要有它：这条路径跨了导航（<c>Frame.Navigate</c>）、官方 <c>ItemsRepeater</c>
