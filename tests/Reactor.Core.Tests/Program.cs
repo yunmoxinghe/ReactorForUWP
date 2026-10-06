@@ -23,12 +23,25 @@ internal static class Program
         HookTests.Run();
         ContextTests.Run();
         EchoGuardTests.Run();
+        ReadyArmTests.Run();
+        EchoLifetimeTests.Run();
+        DiagnosticsCountersTests.Run();
         VirtualListTests.Run();
         BreadcrumbTemplateTests.Run();
         WeakTableTests.Run();
         LocalizationKeysTests.Run();
         RenderBatcherTests.Run();
         ReorderTests.Run();
+        SelectionGateTests.Run();
+        ListViewSelectionTests.Run();
+        ToggleEchoTests.Run();
+        BreadcrumbItemsTests.Run();
+        RebindEchoTests.Run();
+        MountOrderTests.Run();
+        RangeCoerceTests.Run();
+        SiblingWriteTests.Run();
+        RebuildEchoTests.Run();
+        EchoContractTests.Run();
 
         Console.WriteLine();
         Console.WriteLine(new string('-', 60));

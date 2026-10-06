@@ -23,12 +23,34 @@
     <Compile Include="HookTests.cs" />
     <Compile Include="ContextTests.cs" />
     <Compile Include="EchoGuardTests.cs" />
+    <Compile Include="ReadyArmTests.cs" />
+    <Compile Include="EchoLifetimeTests.cs" />
+    <Compile Include="DiagnosticsCountersTests.cs" />
     <Compile Include="VirtualListTests.cs" />
     <Compile Include="BreadcrumbTemplateTests.cs" />
     <Compile Include="WeakTableTests.cs" />
     <Compile Include="LocalizationKeysTests.cs" />
     <Compile Include="RenderBatcherTests.cs" />
     <Compile Include="ReorderTests.cs" />
+    <Compile Include="SelectionGateTests.cs" />
+    <Compile Include="ListViewSelectionSim.cs" />
+    <Compile Include="ListViewSelectionTests.cs" />
+    <Compile Include="ControlledSelectionSim.cs" />
+    <Compile Include="ToggleEchoTests.cs" />
+    <Compile Include="BreadcrumbItemsTests.cs" />
+    <Compile Include="BreadcrumbSim.cs" />
+    <Compile Include="ControlledToggleSim.cs" />
+    <Compile Include="ConditionalRebindSim.cs" />
+    <Compile Include="RebindEchoTests.cs" />
+    <Compile Include="MountOrderSim.cs" />
+    <Compile Include="MountOrderTests.cs" />
+    <Compile Include="RangeCoerceSim.cs" />
+    <Compile Include="RangeCoerceTests.cs" />
+    <Compile Include="SiblingWriteSim.cs" />
+    <Compile Include="SiblingWriteTests.cs" />
+    <Compile Include="RebuildEchoSim.cs" />
+    <Compile Include="RebuildEchoTests.cs" />
+    <Compile Include="EchoContractTests.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -52,6 +74,26 @@
     <Compile Include="..\..\Reactor.uwp\Core\RenderBatcher.cs" Link="Reactor\RenderBatcher.cs" />
     <!-- 面板重排的快路径判断：纯引用比较，锁住"同序即跳过" -->
     <Compile Include="..\..\Reactor.uwp\Internal\Reorder.cs" Link="Reactor\Reorder.cs" />
+    <!-- 受控选中控件的事件闸门纯判据（不依赖 WinRT）：受控闭环仿真要用 -->
+    <Compile Include="..\..\Reactor.uwp\Internal\SelectionGate.cs" Link="Reactor\SelectionGate.cs" />
+    <!-- 受控下标的写回策略（"越界不许下发"那一条）：纯整数判据，
+         能脱离 UWP 运行时被穷举 -->
+    <Compile Include="..\..\Reactor.uwp\Internal\SelectionPolicy.cs" Link="Reactor\SelectionPolicy.cs" />
+    <!-- 受控数值的夹取判据（"登记回声该用哪个值"）：纯 double 运算 -->
+    <Compile Include="..\..\Reactor.uwp\Internal\RangePolicy.cs" Link="Reactor\RangePolicy.cs" />
+    <!-- 序列 diff：handler 判"内容有没有变"用的就是这一份 -->
+    <Compile Include="..\..\Reactor.uwp\Internal\Seq.cs" Link="Reactor\Seq.cs" />
+    <!-- 数据源下发策略：内部 ItemsRepeater 的引用相等语义 -->
+    <Compile Include="..\..\Reactor.uwp\Internal\ItemsSourcePolicy.cs" Link="Reactor\ItemsSourcePolicy.cs" />
+    <!-- 就绪闸「要不要订阅 Loaded」的判据：同样是纯函数。它的注释引用了
+         <c>SelectionVerdict</c>，那条 Link（<c>SelectionGate.cs</c>）因此是它的前置。 -->
+    <Compile Include="..\..\Reactor.uwp\Internal\ReadyPolicy.cs" Link="Reactor\ReadyPolicy.cs" />
+    <!-- 就绪闸的计数：为了让诊断页那块显示屏的格式哨兵用真的 Snapshot 造样本
+         （而不是照抄字面量），它必须是可 Link 的，所以单独一个文件、不碰 XAML -->
+    <Compile Include="..\..\Reactor.uwp\Internal\ReadyStats.cs" Link="Reactor\ReadyStats.cs" />
+    <!-- 诊断页那块「计数增量」显示屏：纯字符串算法，但它现在是人判定
+         "这一发事件被谁吞了"的唯一依据，仪器本身也得有哨兵（见 DiagnosticsCountersTests） -->
+    <Compile Include="..\..\samples\Reactor.Gallery\Pages\DiagnosticsCounters.cs" Link="Gallery\DiagnosticsCounters.cs" />
   </ItemGroup>
 
 </Project>

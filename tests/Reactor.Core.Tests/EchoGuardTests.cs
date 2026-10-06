@@ -77,6 +77,48 @@ internal static class EchoGuardTests
         Program.Check("Forget 后不再识别为回声", !forget.Consume(box, "hello"));
         Program.Expect("Forget 后 matched 保持 0", 0L, EchoStats.Matched);
 
+        // 7) 静默窗：窗内的回执一律算"框架自己写的"——不靠猜值，靠时间窗。
+        EchoStats.Reset();
+        var muted = new EchoGuard();
+        bool inside;
+        using (muted.Silence(box))
+        {
+            inside = muted.Consume(box, "谁也不知道会被夹成什么");
+        }
+
+        Program.Check("窗内的回执判为回声（无需知道值）", inside);
+        Program.Expect("silenced 计数", 1L, EchoStats.Silenced);
+        Program.Check("窗关了就不再屏蔽", !muted.Consume(box, "窗外的真实输入"));
+
+        // 8) 窗可嵌套：退一层还开着，全退完才解除。
+        EchoStats.Reset();
+        var nested = new EchoGuard();
+        using (nested.Silence(box))
+        {
+            using (nested.Silence(box))
+            {
+                nested.Consume(box, "内层");
+            }
+
+            nested.Consume(box, "外层还开着");
+        }
+
+        Program.Check("嵌套窗全退完才解除", !nested.Consume(box, "都关了"));
+        Program.Expect("silenced 计数（嵌套两次各一发）", 2L, EchoStats.Silenced);
+
+        // 9) 窗内的事件<b>不消费</b>已登记的期望。
+        //    反过来看：若它被吃掉，之后用户拖到同一个值就会被判成回声吞掉——
+        //    那正是本版第 3 处修掉的"陈旧登记吞掉真实操作"。
+        EchoStats.Reset();
+        var keep = new EchoGuard();
+        keep.Expect(box, "受控值");
+        using (keep.Silence(box))
+        {
+            keep.Consume(box, "夹出来的值");
+        }
+
+        Program.Check("窗内的事件不吃掉为真实写入准备的登记", keep.Consume(box, "受控值"));
+
         Program.Section("RenderGeneration / 过期 render");
 
         var gen = new RenderGeneration();
