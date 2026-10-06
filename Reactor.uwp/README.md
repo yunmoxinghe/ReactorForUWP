@@ -156,8 +156,10 @@ ItemsRepeater 虚拟化（含回收不变量校验）、
 另外有四道源码级契约守着接线不被照抄漏掉（详见 `docs/release-notes/alpha.6.md`、
 `docs/release-notes/alpha.7.md`）。
 
-alpha.7 在**真机**上验过：Template 内置自检（`LocalState\probe-page.txt` 写 `settings` 才跑）
-在真实控件上跑完整手势与"勾单个 RadioButton"，报告落 `selftest.log`。
+alpha.7 在**真机**上验过：给 Template 临时装过一套自检（在真实控件上跑完整手势与
+"勾单个 RadioButton"，报告落 `selftest.log`），5/5 PASS 之后已把这套调试设施从模板里摘掉——
+模板是给新项目当起点的，不该带着探针。需要重现时从 git 历史取：
+`git show 5282886:samples/Reactor.Template/Services/Probe.cs`。
 
 未做：NuGet 上的正式版、xml 文档。**AOT 发布在本机尚未打通**——
 `reg.exe` 被安全策略拦掉，链接器拿不到 Windows SDK 那半截 `LIB`（`LNK1181: advapi32.lib`），

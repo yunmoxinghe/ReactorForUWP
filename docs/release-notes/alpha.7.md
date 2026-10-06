@@ -65,7 +65,12 @@ apply(control, expected);
 反向对照比的是**回写次数**（`RestoreWriteBackCount`）与是否出现 `restore →` 日志，
 不是最终值——最终值在这几种情况下恰好都一样，看不出差别。
 
-## 3. 模板加了真机自检
+## 3. 真机自检（验完已摘掉，不在发布内容里）
+
+> **这套调试设施只活在 `5282886` 这一个提交里**，alpha.7 验完就从模板上摘掉了——
+> 模板是给新项目当起点的，不该带着一堆探针。要重现：
+> `git show 5282886:samples/Reactor.Template/Services/Probe.cs`（`MainPage.cs` / `App.cs` 同理取那一版）。
+> 下面记的是它**验到了什么**，以及两个实现上的坑。
 
 `samples/Reactor.Template/Services/Probe.cs`：**只有** `LocalState\probe-page.txt` 写着 `settings` 才跑，
 启动 3 秒后在**真实控件**上跑手势，报告落 `selftest.log`，跑完把四项设置还原。平时完全不参与。
