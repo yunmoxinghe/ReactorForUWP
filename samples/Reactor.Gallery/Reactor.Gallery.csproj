@@ -45,10 +45,14 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- 示例的关键点：装 NuGet 包，不引用仓库里的框架源码。
-         这样示例编译通过 = 包里的公共 API 真够用（源码引用会掩盖导出问题）。
-         升级用法：改这里的 Version。 -->
-    <PackageReference Include="Reactor.Uwp" Version="0.1.0-alpha.5" />
+    <!-- 与 Reactor.Template 不同：这里<b>引用仓库里的框架源码</b>，不装 NuGet 包。
+         分工是这样定的：
+         · Reactor.Template = 新项目的起点，走 PackageReference，编译通过即证明
+           "包里的公共 API 够用"（源码引用会掩盖导出问题）；
+         · Reactor.Gallery  = 框架自身的验证载体，里面那个「受控控件诊断」页要读
+           ReactorLog / 闸门计数这类<b>尚未发版</b>的观测 API，只能走工程引用。
+         发布 alpha 包之前，用它跑一遍受控控件，是最快的一次性定性手段。 -->
+    <ProjectReference Include="..\..\Reactor.uwp\Reactor.uwp.csproj" />
     <PackageReference Include="Microsoft.UI.Xaml" Version="2.8.7" />
   </ItemGroup>
 </Project>
