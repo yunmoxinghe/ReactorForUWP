@@ -46,9 +46,17 @@ UWP + WinUI 2 的声明式 UI 框架：用 C# 描述界面，不写 XAML。
 注：项目只支持 x64 / arm64，**不做 x86**，两个架构都有原生产物。
 
 **对齐清单当前全绿**：导航与返回走 `Frame.GoBack()` + 真 BackStack；受控属性走
-`Internal/EchoGuard.cs`（`Expect` 登记 / `Consume` 匹配即吞 / `Forget` 清理，7 处接好），
+`Internal/EchoGuard.cs`（`Expect` 登记 / `Consume` 匹配即吞 / `Forget` 清理），
 对应官方 `Controlled<TValue, TArgs>` + counter-echo；虚拟化走 `ItemsRepeater` +
 原生元素工厂；主题资源是活引用。
+
+受控站点的数量（下面这个数）**不是手填的**：它由 `EchoContractTests` 扫
+`Reactor.uwp/Internal/Handlers.*.cs` 得出，README 里的这个数由同一条测试守着——
+新增一个受控站点而忘了改这里，测试会红。
+
+<!-- CONTROLLED-SITES: 12 -->
+（上面这个数是"写了受控属性、且有回执通道"的类；涉及的属性 8 个，
+另有 `IsPaneOpen` 等属性被显式登记为非受控 —— 元素上没有对应回调，拿不到回执。）
 
 `EchoGuard` 有一条语义别改回去：**只有匹配成功才消费登记**。TextBox 的粘贴 /
 IME / selection replacement 会连发多个 `TextChanged`，无条件删除登记会让第二发
@@ -134,10 +142,20 @@ manifest 里把入口指向这个类：
 
 ## 状态
 
-首个 alpha。已验证的核心链路：纯 C# 启动与 WinUI 2 资源加载、元素 diff/patch、
+`0.1.0-alpha.6`。已验证的核心链路：纯 C# 启动与 WinUI 2 资源加载、元素 diff/patch、
 Frame 导航与过渡、设置页（SettingsCard / SettingsExpander）、
-ItemsRepeater 虚拟化（含回收不变量校验）。
-未做：NuGet 上的正式版、xml 文档。
+ItemsRepeater 虚拟化（含回收不变量校验）、
+受控属性闭环（回声抑制 / 吞后纠正 / 越界守卫 / 就绪闸，逐条有仿真与反向对照）。
+
+受控属性这一块是 alpha.6 的重点，修的是同一类症状——"点了没反应"——的若干个不同面孔：
+受控写回被当成用户输入回调出去、吞掉"取消选中"后没把控件纠正回来、
+受控纠正被绑到"有没有人监听"上、以及 ListView / GridView 此前一份受控设施都没接。
+每条修法都做成开关，关掉后同一批 20000 条随机序列必须失败；
+另外有四道源码级契约守着接线不被照抄漏掉（详见 `docs/release-notes/alpha.6.md`）。
+
+未做：NuGet 上的正式版、xml 文档。**AOT 发布在本机尚未打通**——
+`reg.exe` 被安全策略拦掉，链接器拿不到 Windows SDK 那半截 `LIB`（`LNK1181: advapi32.lib`），
+属环境问题，不是项目配置问题。
 
 ## 发布（Trusted Publishing）
 

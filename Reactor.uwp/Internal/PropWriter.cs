@@ -220,30 +220,7 @@ internal static class PropWriter
         target.SetValue(property, new SolidColorBrush(value));
     }
 
-    /// <summary>两个只读序列是否内容相同（元素逐个用默认比较器比）。</summary>
-    public static bool SequenceEqual<T>(IReadOnlyList<T>? a, IReadOnlyList<T>? b)
-    {
-        if (ReferenceEquals(a, b))
-        {
-            return true;
-        }
-
-        a ??= Array.Empty<T>();
-        b ??= Array.Empty<T>();
-
-        if (a.Count != b.Count)
-        {
-            return false;
-        }
-
-        for (var i = 0; i < a.Count; i++)
-        {
-            if (!EqualityComparer<T>.Default.Equals(a[i], b[i]))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
+    /// <inheritdoc cref="Seq.SequenceEqual{T}"/>
+    public static bool SequenceEqual<T>(IReadOnlyList<T>? a, IReadOnlyList<T>? b) =>
+        Seq.SequenceEqual(a, b);
 }

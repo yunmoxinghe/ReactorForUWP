@@ -131,8 +131,7 @@ internal sealed class VirtualizingListHandler : ElementHandler<VirtualizingListE
         if (TryMountRepeater(scroll, state, element))
         {
             state.Mode = ListMode.Repeater;
-            Reactor.Uwp.Hosting.ReactorApplication.Trace(
-                $"[reactor] 虚拟化 mount: ItemsRepeater 路径，共 {element.Items?.Count ?? 0} 项，行高 {element.ItemHeight}");
+            Reactor.Uwp.Hosting.ReactorLog.Info(Reactor.Uwp.Hosting.ReactorLogChannel.Items, $"虚拟化 mount: ItemsRepeater 路径，共 {element.Items?.Count ?? 0} 项，行高 {element.ItemHeight}");
         }
         else
         {
@@ -261,8 +260,7 @@ internal sealed class VirtualizingListHandler : ElementHandler<VirtualizingListE
         {
             // 桥加载失败（dll 没落到 AppX / 架构产物缺失）就是这条路。
             // 记一次日志就够：每轮渲染都刷会把日志淹掉。
-            Reactor.Uwp.Hosting.ReactorApplication.Trace(
-                $"[reactor] 虚拟化: ItemsRepeater 路径不可用，退回自绘 — [{ex.GetType().Name}] {ex.Message}");
+            Reactor.Uwp.Hosting.ReactorLog.Warn(Reactor.Uwp.Hosting.ReactorLogChannel.Items, $"虚拟化: ItemsRepeater 路径不可用，退回自绘 — [{ex.GetType().Name}] {ex.Message}");
 
             state.Carrier = null;
             state.Repeater = null;
@@ -285,8 +283,7 @@ internal sealed class VirtualizingListHandler : ElementHandler<VirtualizingListE
         if (state.Slots.Count != state.LastReported)
         {
             state.LastReported = state.Slots.Count;
-            Reactor.Uwp.Hosting.ReactorApplication.Trace(
-                $"[reactor] 虚拟化 realize: 容器 {state.Slots.Count} / 总 {carrier.Items.Count} 项");
+            Reactor.Uwp.Hosting.ReactorLog.Trace(Reactor.Uwp.Hosting.ReactorLogChannel.Items, $"虚拟化 realize: 容器 {state.Slots.Count} / 总 {carrier.Items.Count} 项");
         }
 
         // 已挂载（含池里待复用）的容器要按新数据重绑：元素记录是值相等的 record，

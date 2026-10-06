@@ -60,7 +60,16 @@ internal sealed class PasswordBoxHandler : ElementHandler<PasswordBoxElement, Pa
 
         if (newElement.MaxLength is { } max && control.MaxLength != max)
         {
-            control.MaxLength = max;
+            // 这一笔是"改区间把受控值夹走"那一族的又一个成员：
+            // 收紧 MaxLength 时，已有的 Password 到底会不会被控件截短，
+            // **没有源码可查**（Windows.UI.Xaml 那一支不开源，WinUI 2 的 PasswordBox
+            // 就是它；能查到的文档只说它约束输入，没说会不会改已有内容）。
+            // 于是按第 14 节定的同一条原则处理——不猜，开窗：
+            // 窗内没等到事件时代价是零，漏罩则是一发假回调。
+            using (PasswordEcho.Silence(control))
+            {
+                control.MaxLength = max;
+            }
         }
 
         if (newElement.IsPasswordRevealButtonEnabled is { } reveal &&
@@ -76,6 +85,10 @@ internal sealed class PasswordBoxHandler : ElementHandler<PasswordBoxElement, Pa
             {
                 PasswordEcho.Expect(control, value);
                 control.Password = value;
+
+                // Rebind(control, null) 会先退订再 return（本文件 Rebind:91-101），
+                // 回调为空时这一发没人领 → 撤销登记，别留成陈旧期望。
+                PasswordEcho.CancelIfUnconsumed(control);
             }
         }
 
@@ -184,6 +197,10 @@ internal sealed class AutoSuggestBoxHandler : ElementHandler<AutoSuggestBoxEleme
             {
                 TextEcho.Expect(control, text);
                 control.Text = text;
+
+                // 同上：Rebind 里 OnTextChanged 为空就不挂 TextChanged
+                // （本文件 Rebind:249-266），这一发等不到回声，撤销它。
+                TextEcho.CancelIfUnconsumed(control);
             }
         }
 
@@ -323,12 +340,32 @@ internal sealed class NumberBoxHandler : ElementHandler<NumberBoxElement, MuxCon
         MuxControls.NumberBox control)
     {
         PropWriter.Set(oldElement.Header, newElement.Header, value => control.Header = value);
-        ApplyRange(control, newElement);
 
-        if (newElement.Value.HasValue && !SameValue(control.Value, newElement.Value.Value))
+        // ApplyRange 里写 Minimum / Maximum 会把 Value 夹到新区间，那一发 ValueChanged
+        // 抛在**旧订阅还挂着**的时候（Rebind 在下面才退订）。夹出来的值只有控件知道
+        // （NumberBox 的 CoerceValue：越界且 ValidationMode == InvalidInputOverwritten
+        // 时 Value(Minimum) 或 Value(Maximum)），而且改两个边界可能各夹一次 ——
+        // 一次 Expect 装不下两发，所以用静默窗而不是登记期望值。
+        // 第八道契约守着这两处：删掉这个窗就会红。
+        using (ValueEcho.Silence(control))
         {
-            ValueEcho.Expect(control, newElement.Value.Value);
-            control.Value = newElement.Value.Value;
+            ApplyRange(control, newElement);
+        }
+
+        // 同 Slider：登记/下发都用夹取后的值（RangePolicy 的注释里有
+        // NumberBox 的 CoerceValue 源码依据）。NaN 表示"空"，不参与夹取。
+        if (newElement.Value.HasValue)
+        {
+            var target = RangePolicy.Coerce(newElement.Value.Value, control.Minimum, control.Maximum);
+
+            if (!SameValue(control.Value, target))
+            {
+                ValueEcho.Expect(control, target);
+                control.Value = target;
+
+                // 回调为空时订阅不存在（Rebind:412-434），这一发没人领 → 撤销登记。
+                ValueEcho.CancelIfUnconsumed(control);
+            }
         }
 
         Rebind(control, newElement.OnValueChanged);

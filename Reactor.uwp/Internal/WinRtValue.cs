@@ -74,7 +74,7 @@ internal static class WinRtValue
         // 全军覆没：清空并继续，别把异常抛到宿主导致进程终止。
         if (trace)
         {
-            ReactorApplication.Trace($"[reactor] {what}: 所有集合投影均被拒绝，已置空");
+            Reactor.Uwp.Hosting.ReactorLog.Warn(Reactor.Uwp.Hosting.ReactorLogChannel.Interop, $"{what}: 所有集合投影均被拒绝，已置空");
         }
 
         TryAssign(assign, null, what, trace);
@@ -144,8 +144,7 @@ internal static class WinRtValue
         {
             if (trace)
             {
-                ReactorApplication.Trace(
-                    $"[reactor] {what}: 赋值被拒绝（{value?.GetType().Name ?? "null"}）- {ex.Message}");
+                Reactor.Uwp.Hosting.ReactorLog.Warn(Reactor.Uwp.Hosting.ReactorLogChannel.Interop, $"{what}: 赋值被拒绝（{value?.GetType().Name ?? "null"}）- {ex.Message}");
             }
 
             return false;

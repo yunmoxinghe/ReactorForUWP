@@ -83,7 +83,7 @@ public sealed class ReactorHost
         // 注意：这里<b>不要</b>去动 Mica（原因见 RefreshBackdropForTheme 的注释）。
         Root.ActualThemeChanged += (_, _) =>
         {
-            ReactorApplication.Trace($"[reactor] Root.ActualTheme → {Root.ActualTheme}");
+            Reactor.Uwp.Hosting.ReactorLog.Info(Reactor.Uwp.Hosting.ReactorLogChannel.Host, $"Root.ActualTheme → {Root.ActualTheme}");
 
             // 活引用画笔（{ThemeResource} 语义）要在材质之前刷：材质那一步会读
             // 主题算 tint，两边都依赖"本轮的主题已经生效"这一前提。
@@ -125,8 +125,11 @@ public sealed class ReactorHost
         // 已经排过一轮就把这次请求并进去（返回 false），不再单开一次渲染。
         if (!_batcher.TrySchedule())
         {
+            Reactor.Uwp.Hosting.ReactorLog.Schedule("宿主 setState：合并进已排队的那轮");
             return;
         }
+
+        Reactor.Uwp.Hosting.ReactorLog.Schedule("宿主 setState：入队");
 
         // 无论当前在不在 UI 线程都走 RunAsync：UI 线程上它只是排队，
         // 非 UI 线程上它顺带完成 marshal。
@@ -137,6 +140,7 @@ public sealed class ReactorHost
             _batcher.BeginRender();
             try
             {
+                Reactor.Uwp.Hosting.ReactorLog.Frame("宿主整树渲染");
                 Rerender();
             }
             finally
@@ -168,7 +172,7 @@ public sealed class ReactorHost
             return;
         }
 
-        ReactorApplication.Trace($"[reactor] 资源限定符变化: {args.Key}");
+        Reactor.Uwp.Hosting.ReactorLog.Info(Reactor.Uwp.Hosting.ReactorLogChannel.Localize, $"资源限定符变化: {args.Key}");
 
         _ = Root.Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
         {
@@ -247,7 +251,7 @@ public sealed class ReactorHost
         _lastBackdrop = kind;
 
         // 材质"看起来没生效"绝大多数是系统策略静默回退，先把环境自检落盘。
-        ReactorApplication.Trace($"BACKDROP {kind}: {BackdropDiagnostics.Report()}");
+        Reactor.Uwp.Hosting.ReactorLog.Info(Reactor.Uwp.Hosting.ReactorLogChannel.Host, $"BACKDROP {kind}: {BackdropDiagnostics.Report()}");
 
         // 先关闭 Mica 附加属性，避免与 AcrylicBrush 背景叠加。
         Microsoft.UI.Xaml.Controls.BackdropMaterial.SetApplyToRootOrPageBackground(

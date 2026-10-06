@@ -411,6 +411,6 @@ internal static class InputApplier
             return;
         }
 
-        ReactorApplication.Trace($"[reactor] {native.GetType().Name} 上 {what} 不可用（该类型没有对应属性），已忽略");
+        Reactor.Uwp.Hosting.ReactorLog.Warn(Reactor.Uwp.Hosting.ReactorLogChannel.Patch, $"{native.GetType().Name} 上 {what} 不可用（该类型没有对应属性），已忽略");
     }
 }

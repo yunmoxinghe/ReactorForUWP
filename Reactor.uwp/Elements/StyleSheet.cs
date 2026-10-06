@@ -170,8 +170,7 @@ public static class StyleSheet
             }
             catch (Exception ex)
             {
-                global::Reactor.Uwp.Hosting.ReactorApplication.Trace(
-                    $"[reactor] 自定义样式构建失败: {key} - {ex.Message}");
+                global::Reactor.Uwp.Hosting.ReactorLog.Error(global::Reactor.Uwp.Hosting.ReactorLogChannel.Resource, $"自定义样式构建失败: {key} - {ex.Message}");
                 return null;
             }
         }
@@ -186,7 +185,7 @@ public static class StyleSheet
             return style;
         }
 
-        global::Reactor.Uwp.Hosting.ReactorApplication.Trace($"[reactor] 未找到命名样式: {key}");
+        global::Reactor.Uwp.Hosting.ReactorLog.Warn(global::Reactor.Uwp.Hosting.ReactorLogChannel.Resource, $"未找到命名样式: {key}");
         return null;
     }
 }

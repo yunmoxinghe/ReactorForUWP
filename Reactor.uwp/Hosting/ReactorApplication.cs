@@ -360,32 +360,16 @@ public abstract partial class ReactorApplication : WindowsUIApplication,
     }
 
     /// <summary>
-    /// 启动期诊断日志，落到 LocalState\reactor-startup.log。
+    /// 诊断日志。落到 <c>LocalState\reactor-startup.log</c>。
     /// stowed exception (0xC000027B) 不会带托管堆栈，只能靠落盘定位。
-    /// 注意：可在任意线程调用；非 UI 线程访问 ApplicationData 可能失败，此时降级为 Debug 输出。
+    /// 可在任意线程调用；非 UI 线程访问 <c>ApplicationData</c> 可能失败，此时只留 Debug 输出。
     /// </summary>
-    public static void Trace(string message)
-    {
-        var line = $"{DateTime.Now:HH:mm:ss.fff} [{System.Threading.Thread.CurrentThread.ManagedThreadId}] {message}{Environment.NewLine}";
-
-        // 先尝试写调试输出（任何线程都安全）
-        System.Diagnostics.Debug.WriteLine(line);
-
-        // 再尝试写文件（可能因线程上下文失败，但不影响进程存活）
-        try
-        {
-            var path = Path.Combine(
-                ApplicationData.Current.LocalFolder.Path, "reactor-startup.log");
-            using var fs = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
-            using var sw = new StreamWriter(fs);
-            sw.Write(line);
-            sw.Flush();
-        }
-        catch
-        {
-            // 静默失败：Debug.WriteLine 已输出，文件写不进去也不崩溃
-        }
-    }
+    /// <remarks>
+    /// <b>本方法只是兼容外壳。</b>框架内部已全部改用 <see cref="ReactorLog"/>（有通道、有级别、
+    /// 有内存环形缓冲）；新代码请直接用 <see cref="ReactorLog"/>，别再往这里加前缀约定。
+    /// </remarks>
+    public static void Trace(string message) =>
+        ReactorLog.Write(ReactorLogChannel.Host, ReactorLogLevel.Info, message);
 }
 
 /// <summary>

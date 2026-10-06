@@ -34,7 +34,24 @@
     <!-- alpha.5：重渲染批处理补上死循环保护（连续 50 轮自触发即抛），
          本地化切语言链路修好，RenderBatcher / Reorder 有回归测试兜底。
          注意 alpha.5 起 setState 语义与官方对齐（不再同步生效）。 -->
-    <PackageVersion>0.1.0-alpha.5</PackageVersion>
+    <!-- alpha.6：修掉受控控件的一批 bug，全是"点了没反应"的不同面孔
+         （机制、源码行号与反向对照见 docs/release-notes/alpha.6.md）：
+         · 吞掉"取消选中"后没把控件纠正回来 → 点当前已选中项、或选中项被虚拟化
+           回收之后，控件停在"无选中"而 state 仍有值；
+         · 受控写入在"不会抛事件"的时刻泄漏回声登记 → 之后点回同一个值被当成
+           回声吞掉（这就是"换个值就正常，点这个值没反应"的来源）；
+         · 回调为空时的受控写入同样泄漏 —— 三个 handler 共有，不是某一个的病；
+         · 受控纠正被绑到"有没有人监听"上 → 没挂回调的页面永久停在"没选中"；
+         · ListView / GridView（ItemsViewHandler）此前一份受控设施都没接：受控
+           写回被当成用户输入回调出去、换数据源时凭空回调、items 变少后越界
+           写入被内核整条 undo。三处策略统一到 SelectionPolicy.ShouldApply。
+         · x:Uid 那笔写落在订阅之后（Localization.ApplyUid 排在 Build 末尾）→
+           挂载时凭空多一次 OnChanged，state 被 resw 里的串改写；
+         · 改 Minimum / Maximum 会把受控值夹走，那一发 ValueChanged 抛在旧订阅
+           还挂着的时候 → 被当成用户输入回调出去（Slider / NumberBox 共有）。
+         另给受控值越界加了纠正守卫，防止越界时自激。
+         以上都是测试自行发现并复现的，含"不修就坏"的反向对照。 -->
+    <PackageVersion>0.1.0-alpha.6</PackageVersion>
     <Authors>云漠星</Authors>
     <Copyright>Copyright © 2026 云漠星</Copyright>
     <Description>UWP + WinUI 2 的声明式 UI 框架：用 C# 描述界面，不写 XAML。映射 WinUI 2 控件（不是内置控件树），带自实现的虚拟列表与 ItemsRepeater 原生工厂桥。</Description>

@@ -9,6 +9,7 @@ using Windows.UI.Xaml.Media;
 using Windows.UI.Xaml.Media.Animation;
 using Windows.UI.Xaml.Media.Imaging;
 using MuxControls = Microsoft.UI.Xaml.Controls;
+using Reactor.Uwp.Hosting;
 using ToolkitControls = CommunityToolkit.WinUI.Controls;
 
 namespace Reactor.Uwp.Internal;
@@ -240,8 +241,15 @@ internal sealed class BreadcrumbBarHandler
 {
     private static readonly WeakTable<MuxControls.BreadcrumbBar, Action<int>?> Callbacks = new();
 
-    /// <summary>每个控件的向量载体：只为拿到一个真 WinRT 向量喂 ItemsSource。</summary>
-    // 载体随 bar 一起回收：bar 不可达 → 弱键条目自动消失 → 载体释放。
+    /// <summary>
+    /// 每个面包屑<b>当前正在用的数据源载体</b>。
+    /// </summary>
+    /// <remarks>
+    /// 这不是缓存，是<b>续命</b>。见 <see cref="ApplyItems"/> 里那段说明：
+    /// 载体 <c>ItemsControl</c> 不进任何可视树，交给 GC 之后它的析构会把那个
+    /// <c>ItemCollection</c> 清空，而面包屑还抓着同一份引用。
+    /// 表是<b>弱键</b>的，控件回收时条目自动消失，不额外泄漏。
+    /// </remarks>
     private static readonly WeakTable<MuxControls.BreadcrumbBar, ItemsControl> Carriers = new();
 
     /// <summary>
@@ -262,11 +270,7 @@ internal sealed class BreadcrumbBarHandler
     {
         var bar = new MuxControls.BreadcrumbBar();
 
-        var carrier = new ItemsControl();
-        Carriers[bar] = carrier;
-        SyncItems(carrier.Items, element);
-
-        bar.ItemsSource = carrier.Items;
+        ApplyItems(bar, element.Items);
 
         if (ResolveItemTemplate(element) is { } template)
         {
@@ -287,13 +291,16 @@ internal sealed class BreadcrumbBarHandler
     {
         Callbacks[control] = newElement.OnItemClicked;
 
-        if (Carriers.TryGetValue(control, out var carrier))
+        // 条目内容真变了才动数据源：换引用会让内部 ItemsRepeater 把条目全拆重建，
+        // 每轮渲染都换 = 永远在重建。
+        // 这个比较走 Seq.SequenceEqual —— 它被 <c>tests/Reactor.Core.Tests</c>
+        // Link 进去直接断言，改这里的判据会同时改到测试（事实来源只有一处）。
+        if (!PropWriter.SequenceEqual(oldElement.Items, newElement.Items))
         {
-            SyncItems(carrier.Items, newElement);
+            ApplyItems(control, newElement.Items);
         }
 
-        // 模板是引用比较（变了才重写）：写一次 ItemTemplate 会让 ItemsRepeater
-        // 把已有条目全部拆了重建，本来没事的两个 int 比较挡掉这些重建。
+        // 模板是引用比较（变了才重写）：写一次 ItemTemplate 同样会拆重建整套条目。
         var template = ResolveItemTemplate(newElement);
         if (!ReferenceEquals(control.ItemTemplate, template))
         {
@@ -305,6 +312,8 @@ internal sealed class BreadcrumbBarHandler
     {
         control.ItemClicked -= OnItemClicked;
         Callbacks.Remove(control);
+
+        // 只是提前释放：表本身是弱键的，控件不可达时条目也会自己消失。
         Carriers.Remove(control);
     }
 
@@ -319,43 +328,98 @@ internal sealed class BreadcrumbBarHandler
     }
 
     /// <summary>
-    /// 同步向量内容。内容没变就<b>一个字节都不动</b>——<c>Clear()</c> 会让内部的
-    /// ItemsRepeater 把条目全拆了重建，每轮重渲染清一次等于永远在重建。
+    /// 把条目下发给控件。<b>每次都换一个新的数据源引用</b>——这是 WinUI 源码硬要求的，
+    /// 不是保守起见。
     /// </summary>
     /// <remarks>
-    /// 喂进去的是<b>字符串</b>（数据）。别改回 <c>UIElement</c>：那样一来
-    /// <c>Items.Add</c> 会先给它置一个父，ItemsRepeater 再挂就是第二个父，
-    /// 第一次布局即 0x800F1000（见类注释，probe mode=5 实证）。
+    /// <b>依据（<c>tools/winui2-ref/dev/Breadcrumb/BreadcrumbBar.cpp:163-175</c>）：</b>
+    /// <code>
+    /// // A new BreadcrumbIterable must be created as ItemsRepeater compares if the
+    /// // previous itemsSource is equals to the new one
+    /// m_itemsIterable = winrt::make_self&lt;BreadcrumbIterable&gt;(ItemsSource());
+    /// itemsRepeater.ItemsSource(*m_itemsIterable);
+    /// </code>
+    /// 官方每次都要 <c>new</c> 一个 <c>BreadcrumbIterable</c>——而那个类
+    /// （<c>BreadcrumbIterable.h</c>）身上只有 <c>IIterable&lt;IInspectable&gt;</c>，
+    /// 一个哑迭代器，存在的<b>唯一目的就是让引用变掉</b>。因为内部 <c>ItemsRepeater</c>
+    /// 按<b>引用相等</b>判断数据源换没换。
+    /// <para>
+    /// 于是旧写法错得很具体：给一个长期持有的 <c>ItemCollection</c>、之后原地
+    /// <c>Clear()/Add()</c>——引用从头到尾没变，repeater 认为"数据源没换"，
+    /// 条目数自然纹丝不动。唯一能救场的是集合变更通知，而这条路在 BreadcrumbBar 里是残的：
+    /// <list type="bullet">
+    ///   <item><c>BreadcrumbBar.h:74</c> 的 <c>m_itemsSourceAsObservableVectorChanged</c>
+    ///         全仓库只有 revoke 没有赋值，是从没接上的死代码；</item>
+    ///   <item><c>UpdateItemsRepeaterItemsSource()</c>(cpp:142) 里真正接的那条
+    ///         <c>ItemsSourceView.CollectionChanged</c>，其处理体(cpp:163)开头就要求
+    ///         <c>m_itemsRepeater</c> 已存在——控件还没 ApplyTemplate 时，这一整批更新
+    ///         被<b>静默丢弃</b>，之后若 repeater 一直不 Loaded（典型：面包屑常驻在
+    ///         <c>Collapsed</c> 容器里），就再没有别的机会补回来了。</item>
+    /// </list>
+    /// 这正好对应"面包屑整条不见"。
+    /// </para>
+    /// <para>
+    /// 换引用之后不用再管时机：<b>依赖属性始终是最新值</b>，repeater 何时出现，
+    /// <c>OnApplyTemplate</c>(cpp:73) 末行和 <c>OnBreadcrumbBarItemsRepeaterLoaded</c>(cpp:96)
+    /// 都会按当前 <c>ItemsSource()</c> 重建。所以这里<b>不需要</b> Loaded 兜底。
+    /// </para>
     /// </remarks>
-    private static void SyncItems(ItemCollection target, BreadcrumbBarElement element)
+    private static void ApplyItems(
+        MuxControls.BreadcrumbBar bar, IReadOnlyList<string>? items)
     {
-        var list = element.Items ?? Array.Empty<string>();
+        var list = items ?? Array.Empty<string>();
 
-        if (target.Count == list.Count)
-        {
-            var same = true;
-            for (var i = 0; i < list.Count; i++)
-            {
-                if (target[i] is not string text ||
-                    !string.Equals(text, list[i], StringComparison.Ordinal))
-                {
-                    same = false;
-                    break;
-                }
-            }
-
-            if (same)
-            {
-                return;
-            }
-        }
-
-        target.Clear();
-
+        // 用 ItemsControl.Items 是刻意的：string[] 之类的 CLR 集合在这条
+        // AOT + DisableRuntimeMarshalling 栈上封送不到 WinRT 侧，而 ItemCollection
+        // 是货真价实的 WinRT 向量。每发一次就 new 一个载体，顺带满足"引用必须变化"。
+        var carrier = new ItemsControl();
         foreach (var text in list)
         {
-            target.Add(text);
+            carrier.Items.Add(text);
         }
+
+        // ── 把载体钉住 ──────────────────────────────────────────────────
+        // 载体不进任何可视树，除了这个表没别的地方引用它。交给 GC 之后的后果有出处：
+        //   dxaml/xcp/core/core/elements/ItemsControl.cpp:9-18（析构）
+        //     if (m_pItemCollection) { m_pItemCollection->Clear();
+        //                             m_pItemCollection->SetOwner(nullptr); }
+        //     ReleaseInterface(m_pItemCollection);
+        // 也就是<b>主人一死就把集合清空</b>。而此刻 <c>ItemsSource</c> 依赖属性还抓着
+        // 同一份引用 —— 表现会是"条目凭空变空"，且时机随 GC，难复现。
+        //
+        // ⚠ 这一段是<b>防御性推断，不是已证实的 bug</b>：<c>CItemCollection</c>
+        //   的所有权语义在闭源内核里，本仓库拿不到源码证明/证伪它真的会清。
+        //   代价（每控件多挂一个空 ItemsControl）≈ 0，收益是彻底绕开这个疑问，故选钉住。
+        Carriers[bar] = carrier;
+
+        // 取证放在赋值<b>之前</b>：这样"数据源对不对"和"repeater 认不认"能分开看——
+        // 日志里有这一行但界面上没条目，问题就一定在 repeater 侧（模板/布局），
+        // 不在数据源；连这一行都没有，则是 Update 的 diff 判成了"没变"。
+        //
+        // 编号走 <see cref="CtlId"/> 而不是 <c>GetHashCode</c>：这里要证的正是
+        // "每次都是新实例"，而 GetHashCode 在 AOT / 压缩 GC 下不稳，同一个对象
+        // 可能前后显示两个号——那就分不清到底换没换（这个跟头在这个仓库栽过一次，
+        // 别再栽）。CtlId 是引用相等的稳定编号，同一实例永远同号、号只增不减，
+        // 于是日志里"#12 → #37"就是真的换了，可以直接拿来当证据。
+        var previous = bar.ItemsSource;
+        var willRebuild = ItemsSourcePolicy.WillTriggerRebuild(previous, carrier.Items);
+
+        ReactorLog.Info(
+            ReactorLogChannel.Items,
+            $"面包屑: 下发 {list.Count} 项 [{(list.Count == 0 ? "(空)" : string.Join('/', list))}]，" +
+            $"数据源 {CtlId.Tag(carrier.Items)}（{ItemsSourcePolicy.Reason(willRebuild)}）");
+
+        if (!willRebuild)
+        {
+            // 正常路径永不出现：ApplyItems 每次 new 一个载体，引用必变。
+            // 出现 = 有人"优化"成复用长期持有的集合 —— 那就是当年"面包屑不见了"的原bug。
+            ReactorLog.Warn(
+                ReactorLogChannel.Items,
+                $"面包屑{CtlId.Tag(bar)}: ItemsSource 引用与上次相同，ItemsRepeater 不会重建" +
+                $"（BreadcrumbBar.cpp:80-83）→ 条目会停在旧值");
+        }
+
+        bar.ItemsSource = carrier.Items;
     }
 
     /// <summary>
@@ -397,8 +461,7 @@ internal sealed class BreadcrumbBarHandler
         {
             if (UnresolvedStyles.Add(styleKey))
             {
-                Reactor.Uwp.Hosting.ReactorApplication.Trace(
-                    $"[reactor] 面包屑: 资源里没有样式 {styleKey}，跳过（用默认外观）");
+                ReactorLog.Warn(ReactorLogChannel.Resource, $"面包屑: 资源里没有样式 {styleKey}，跳过（用默认外观）");
             }
 
             // 连样式都没有又没给字号的话，就彻底用控件自带的外观。
@@ -421,8 +484,7 @@ internal sealed class BreadcrumbBarHandler
         catch (Exception ex)
         {
             // 模板挂不上不能把整棵界面树拖死：退化为默认外观（字号是官方默认的 14px）。
-            Reactor.Uwp.Hosting.ReactorApplication.Trace(
-                $"[reactor] 面包屑 ItemTemplate 构造失败: [{ex.GetType().Name}] {ex.Message}");
+            ReactorLog.Error(ReactorLogChannel.Resource, $"面包屑 ItemTemplate 构造失败: [{ex.GetType().Name}] {ex.Message}");
             return null;
         }
     }
@@ -468,10 +530,16 @@ internal sealed class ExpanderHandler : ElementHandler<ExpanderElement, MuxContr
         ExpanderElement newElement,
         MuxControls.Expander control)
     {
-        // IsExpanded 是"用户可改 + state 也在写"的双向属性：只在声明值真的变了时才写，
-        // 否则用户手动展开的卡片遇到任何重渲染都会被拽回 state 值（表现为"闪一下合上"）。
-        // 官方对这类属性用 Controlled + counter-echo（订阅 Expanding/Collapsed 并抑制
-        // 自己写值造成的回声）；这里是它的弱化版：足够解决"被拽回"，但不抑制回声。
+        // IsExpanded 在这一版里是 <b>defaultValue（非受控）</b>语义，不是受控属性：
+        //   · 元素与工厂都没有展开回调参数（见 Factories.Template.cs 的 Expander()），
+        //     用户点了表头之后 state 无从得知 —— 这是 Element API 的形状决定的，不是漏接；
+        //     所以这里<b>没有</b>回声登记，也<b>不订阅</b>任何事件（没什么可抑制的）。
+        //   · 因此只在声明值<b>真的变了</b>时才写：无条件写会把用户手动展开的卡片在
+        //     任何一次重渲染里拽回 state 值，界面上就是"闪一下合上"。
+        // 想把它升级成真受控，得先给元素加回调参数、再在控件上拿到回执。
+        // （WinUI 2 的 Expander 源码不在本地参考树 tools/winui2-ref/dev 里——那里只有
+        //   Breadcrumb / ItemsRepeater / NavigationView / RadioButtons，所以这里不对
+        //   "官方怎么做"作任何断言。相邻的 SettingsExpander 有本地源码，那边说了。）
         if (oldElement.IsExpanded != newElement.IsExpanded)
         {
             control.IsExpanded = newElement.IsExpanded;
@@ -784,8 +852,17 @@ internal sealed class SettingsExpanderHandler
         SettingsExpanderElement newElement,
         ToolkitControls.SettingsExpander control)
     {
+        // 与上面的 ExpanderHandler 同一个决定：IsExpanded 是 defaultValue（非受控）语义。
         // 只在"声明值真的变了"时才写。无条件写会把用户手动展开/折叠的状态拽回 state 值：
         // 点上面任意开关触发重渲染 → 下面展开着的卡片被强行合上（用户看到的就是"闪一下"）。
+        //
+        // 为什么<b>不订阅</b> Expanded / Collapsed（它们确实存在，见
+        // tools/ctk-ref/SettingsExpander.Events.cs:12、17）：翻遍参考源码，
+        // 这两个事件<b>没有任何一处 .Invoke</b> —— 是死事件。用户点表头走的是
+        // SettingsExpander.xaml:263 那条 TwoWay 绑定（ToggleButton.IsChecked ↔ IsExpanded），
+        // 落到 SettingsExpander.cs:69 的 OnIsExpandedChanged 里，而它只抛
+        // automation peer 事件（:72），不抛 CLR 事件。所以订阅了也收不到回执。
+        // 真要受控，得用 RegisterPropertyChangedCallback 盯 IsExpanded 这个依赖属性。
         if (oldElement.IsExpanded != newElement.IsExpanded)
         {
             control.IsExpanded = newElement.IsExpanded;
@@ -1020,8 +1097,7 @@ internal sealed class FrameHandler : ElementHandler<FrameElement, Frame>
     {
         frame.GoBack();
 
-        Reactor.Uwp.Hosting.ReactorApplication.Trace(
-            $"[reactor] Frame.GoBack: 剩余回退栈 {frame.BackStackDepth} 条");
+        ReactorLog.Info(ReactorLogChannel.Patch, $"Frame.GoBack: 剩余回退栈 {frame.BackStackDepth} 条");
 
         if (frame.Content is Page page)
         {
@@ -1070,8 +1146,7 @@ internal sealed class FrameHandler : ElementHandler<FrameElement, Frame>
         // 清了就退不回去了。
         if (!preserveBackStack && frame.BackStackDepth > 0)
         {
-            Reactor.Uwp.Hosting.ReactorApplication.Trace(
-                $"[reactor] Frame.Navigate: 清理 {frame.BackStackDepth} 条回退栈");
+            ReactorLog.Info(ReactorLogChannel.Patch, $"Frame.Navigate: 清理 {frame.BackStackDepth} 条回退栈");
             frame.BackStack.Clear();
         }
 
@@ -1127,14 +1202,12 @@ internal sealed class FrameHandler : ElementHandler<FrameElement, Frame>
         {
             Windows.UI.Xaml.ElementSoundPlayer.Play(Windows.UI.Xaml.ElementSoundKind.GoBack);
 
-            Reactor.Uwp.Hosting.ReactorApplication.Trace(
-                $"[reactor] 返回导航: 播 GoBack 音效（State={Windows.UI.Xaml.ElementSoundPlayer.State}）");
+            ReactorLog.Trace(ReactorLogChannel.Host, $"返回导航: 播 GoBack 音效（State={Windows.UI.Xaml.ElementSoundPlayer.State}）");
         }
         catch (Exception ex)
         {
             // 音效不是关键路径：播不出来也不能把导航拖崩。
-            Reactor.Uwp.Hosting.ReactorApplication.Trace(
-                $"[reactor] 返回音效播放失败: [{ex.GetType().Name}] {ex.Message}");
+            ReactorLog.Warn(ReactorLogChannel.Host, $"返回音效播放失败: [{ex.GetType().Name}] {ex.Message}");
         }
     }
 

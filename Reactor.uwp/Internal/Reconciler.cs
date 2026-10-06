@@ -7,6 +7,7 @@ using Windows.UI.Xaml.Automation;
 using Windows.UI.Xaml.Controls;
 using Windows.UI.Xaml.Controls.Primitives;
 using Windows.UI.Xaml.Media;
+using Reactor.Uwp.Hosting;
 
 namespace Reactor.Uwp.Internal;
 
@@ -1019,7 +1020,31 @@ internal sealed class Reconciler
             return;
         }
 
-        TextChangedEventHandler handler = (s, _) => onChanged(((TextBox)s).Text);
+        // 闭包里先问一句"这一发的作者是谁"。
+        //
+        // 挂载期写进去的值同样会抛 TextChanged，而那一发的作者是我们、不是用户：
+        // `Localization.ApplyUid` 排在 handler 订阅之后（`Build` 的次序见第 15 节），
+        // 它给 `x:Uid` 套进去的 resw 值会把 `OnChanged` 凭空叫一次。
+        // 两条判据**互补**，不是冗余：
+        //   · `PropWriter.IsMounting` —— 事件同步抛时，`Build` 还在栈上；
+        //   · `!IsLoaded` —— 延后到控件进树**之前**才抛的那一发，靠这条兜住。
+        //
+        // 已知边界（不假装能拦）：两者都假——即延后到 `Loaded` **之后**才抛——时
+        // 拦不住，那一发与真实键入无从区分。按一贯原则：宁可多回调一次，
+        // 也不为了追它去吞真实输入。
+        TextChangedEventHandler handler = (s, _) =>
+        {
+            if (PropWriter.IsMounting || !textBox.IsLoaded)
+            {
+                ReactorLog.Gate(
+                    $"TextBox{CtlId.Tag(textBox)} 挂载期回执" +
+                    $"（IsMounting={PropWriter.IsMounting}，IsLoaded={textBox.IsLoaded}），不算用户输入");
+                return;
+            }
+
+            onChanged(((TextBox)s).Text);
+        };
+
         textBox.TextChanged += handler;
         _textChanged[textBox] = handler;
     }

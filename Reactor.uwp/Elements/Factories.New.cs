@@ -109,6 +109,20 @@ public static partial class Factories
             OnSelectedIndexChanged = onSelectedIndexChanged,
         };
 
+    /// <summary>带 <c>SelectionMode</c> 的重载：改模式会把选中态一起牵动，这个参数
+    /// 让示例能直接取证那一发（见第九道契约）。</summary>
+    public static ListViewElement ListView(
+        Optional<int> selectedIndex,
+        Action<int>? onSelectedIndexChanged,
+        ListViewSelectionMode selectionMode,
+        params Element?[] items) =>
+        new(FilterChildren(items))
+        {
+            SelectedIndex = selectedIndex,
+            OnSelectedIndexChanged = onSelectedIndexChanged,
+            SelectionMode = selectionMode,
+        };
+
     public static GridViewElement GridView(params Element?[] items) =>
         new(FilterChildren(items));
 

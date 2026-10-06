@@ -77,8 +77,7 @@ public static class ReactorDialog
 
         if (_isShowing)
         {
-            ReactorApplication.Trace(
-                "[reactor] 已有弹窗在显示，忽略本次请求（UWP 同时只允许一个 ContentDialog）");
+            global::Reactor.Uwp.Hosting.ReactorLog.Warn(global::Reactor.Uwp.Hosting.ReactorLogChannel.Host, "已有弹窗在显示，忽略本次请求（UWP 同时只允许一个 ContentDialog）");
             return ContentDialogResult.None;
         }
 
@@ -92,8 +91,7 @@ public static class ReactorDialog
         }
         catch (Exception ex)
         {
-            ReactorApplication.Trace(
-                $"[reactor] 弹窗显示失败: {ex.GetType().Name}: {ex.Message}");
+            global::Reactor.Uwp.Hosting.ReactorLog.Error(global::Reactor.Uwp.Hosting.ReactorLogChannel.Host, $"弹窗显示失败: {ex.GetType().Name}: {ex.Message}");
             result = ContentDialogResult.None;
         }
         finally
@@ -107,8 +105,7 @@ public static class ReactorDialog
         }
         catch (Exception ex)
         {
-            ReactorApplication.Trace(
-                $"[reactor] 弹窗回调异常: {ex.GetType().Name}: {ex.Message}");
+            global::Reactor.Uwp.Hosting.ReactorLog.Error(global::Reactor.Uwp.Hosting.ReactorLogChannel.Host, $"弹窗回调异常: {ex.GetType().Name}: {ex.Message}");
         }
 
         return result;
@@ -130,7 +127,7 @@ public static class ReactorDialog
             }
             else
             {
-                ReactorApplication.Trace($"[reactor] 弹窗样式未找到: {key}");
+                global::Reactor.Uwp.Hosting.ReactorLog.Warn(global::Reactor.Uwp.Hosting.ReactorLogChannel.Resource, $"弹窗样式未找到: {key}");
             }
         }
 
