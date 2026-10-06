@@ -1,0 +1,43 @@
+namespace Reactor.Uwp.Internal;
+
+/// <summary>
+/// 就绪闸的计数。与 <see cref="EchoStats"/> 同列：一个答"控件准备好了吗"，
+/// 一个答"这是不是我自己写的回声"，两条判据互相独立，别合并。
+/// </summary>
+/// <remarks>
+/// <b>为什么单独一个文件。</b>它不碰 XAML，而 <see cref="ReadyGate"/> 依赖
+/// <c>Windows.UI.Xaml</c>（<c>FrameworkElement</c> / <c>RoutedEventArgs</c>）。
+/// 分开之后这份计数能被 <c>net10.0</c> 的测试工程 Link 进去：诊断页那块
+/// 「计数增量」显示屏的格式哨兵要用<b>真的 <c>Snapshot()</c></b> 造样本，
+/// 而不是照抄字面量——合在一起就办不到（"还得利这种 Link 能不能编"的地雷也顺便埋下来了）。
+/// </remarks>
+internal static class ReadyStats
+{
+    /// <summary>进入就绪状态的控件数。</summary>
+    public static long Ready;
+
+    /// <summary>未就绪期间被吞掉的事件数（这些全是 WinUI 内部中间态）。</summary>
+    public static long Suppressed;
+
+    /// <summary>
+    /// <c>Arm</c> 时发现"控件<b>其实已经在树上</b>"的次数。
+    /// </summary>
+    /// <remarks>
+    /// 它是一条<b>可证伪</b>的读数：非 0 就说明 <see cref="ReadyPolicy"/> 描述的那种
+    /// 中间态在真机上真的发生了（若沿用旧写法，这些控件会永久停在未就绪，
+    /// 其间的事件一发都不放行）。单独计数而不是并入 <see cref="Ready"/>，是为了让
+    /// "有多少控件正常走完 Loaded" 和 "有多少是被探针救回来的" 两件事<b>分开看</b>——
+    /// 合起来就再也发现不了这条路径。
+    /// </remarks>
+    public static long AlreadyLoaded;
+
+    public static void Reset()
+    {
+        Ready = 0;
+        Suppressed = 0;
+        AlreadyLoaded = 0;
+    }
+
+    public static string Snapshot() =>
+        $"ready={Ready} suppressed={Suppressed} alreadyLoaded={AlreadyLoaded}";
+}
