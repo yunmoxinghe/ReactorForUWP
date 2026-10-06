@@ -55,3 +55,6 @@ Reactor.Uwp.Native/winmd/
 Reactor.Uwp.Native/prebuilt/**/*.exp
 Reactor.Uwp.Native/prebuilt/**/*.lib
 Reactor.Uwp.Native/prebuilt/**/*.pdb
+# 第三方源码本地副本（只用于本地复核笔记里的行号，不入库）
+tools/winui2-ref/
+tools/ctk-ref/
