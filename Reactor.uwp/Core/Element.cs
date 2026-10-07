@@ -63,6 +63,19 @@ public record ElementModifiers
     public string? AutomationName { get; init; }
     public string? AutomationId { get; init; }
     public string? ToolTip { get; init; }
+
+    /// <summary>
+    /// 提示气泡的<b>内容</b>（对应 <c>ToolTipService.ToolTip</c> 属性元素语法那一档）。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="ToolTip"/>（字符串）是官方 XAML 的两种写法，不是两个旋钮：
+    /// 一个走特性语法 <c>ToolTipService.ToolTip="文本"</c>，一个走属性元素语法
+    /// <c>&lt;ToolTipService.ToolTip&gt;…子树…&lt;/ToolTipService.ToolTip&gt;</c>。
+    /// 两个都给了以<b>这一条</b>为准（它表达力更强）。详见
+    /// <see cref="ToolTipElement"/> 的说明。
+    /// </remarks>
+    public Element? ToolTipContent { get; init; }
+
     public BackdropKind? Backdrop { get; init; }
 
     /// <summary>
@@ -123,6 +136,25 @@ public record ElementModifiers
     public bool? FocusOnMount { get; init; }
 
     /// <summary>
+    /// 焦点令牌：<b>它变了就请求一次焦点</b>（同样走
+    /// <c>control.Focus(FocusState.Programmatic)</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <b>为什么需要一个"令牌"而不是一个命令。</b>焦点是控件的<b>状态</b>，不是属性：
+    /// XAML 里没有 <c>IsFocused</c> 可写（<c>Focus()</c> 是方法，且返回值取决于
+    /// 那一刻控件在不在树里、可见不可见）。声明式描述里能给的只有"我希望此刻
+    /// 它在焦点上"，而这个希望每帧都在——如果建成"每帧调一次 Focus"，
+    /// 用户点走焦点后下一次重渲染又会被抢回来。
+    /// <para>
+    /// 所以这里把它做成<b>边沿触发</b>：只有当令牌与上一次处理过的不同时才请求一次。
+    /// 想要"再聚焦一次"就把令牌 +1。等价的 XAML 写法是代码后置里那个
+    /// <c>searchBox.Focus(FocusState.Programmatic)</c>（WinUI 3 Gallery 的 Ctrl+F
+    /// 正是这么做的），这里只是把"什么时候调"搬到声明式这边。
+    /// </para>
+    /// </remarks>
+    public int? FocusToken { get; init; }
+
+    /// <summary>
     /// 访问键（XAML 的 <c>AccessKey</c>，Alt+字符 触发）。<c>UIElement</c> 上就有。
     /// </summary>
     public string? AccessKey { get; init; }
@@ -130,7 +162,40 @@ public record ElementModifiers
     /// <summary>
     /// 右键/长按弹出的浮出层（XAML 的 <c>ContextFlyout</c>，通常是 <c>MenuFlyout</c>）。
     /// </summary>
+    /// <remarks>
+    /// 收的是<b>已经造好的原生实例</b>。要声明式地写一份菜单用
+    /// <see cref="ContextMenu"/>——两个槽位互斥，都给了以
+    /// <see cref="ContextMenu"/> 为准。
+    /// </remarks>
     public FlyoutBase? ContextFlyout { get; init; }
+
+    /// <summary>
+    /// 右键/长按弹出的<b>声明式菜单</b>（XAML 的
+    /// <c>&lt;UIElement.ContextFlyout&gt;&lt;MenuFlyout&gt;…&lt;/MenuFlyout&gt;</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <c>MenuFlyout</c> 不是 <c>UIElement</c>，走不了协调器，所以这里存的是
+    /// <b>元素描述</b>（<c>MenuFlyoutElement</c>），由
+    /// <c>Internal/InputApplier</c> 就地物化——与
+    /// <c>RichTextBlock</c> / <c>Paragraph</c> / <c>Run</c> 同一条规矩。
+    /// </remarks>
+    public Element? ContextMenu { get; init; }
+
+    /// <summary>
+    /// 选中文本时弹出的<b>声明式浮出层</b>（XAML 的
+    /// <c>&lt;TextBox.SelectionFlyout&gt;&lt;TextCommandBarFlyout/&gt;</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="ContextMenu"/> 是<b>两个不同的槽位</b>：后者是右键 / 长按，
+    /// 这里是"选中文字之后"——官方为文本控件专门留的，所以也只有文本控件
+    /// （<c>TextBox</c> / <c>RichEditBox</c> / <c>TextBlock</c> / <c>RichTextBlock</c>）
+    /// 有这个属性，给别的控件写会留一条痕并被忽略。
+    /// <para>
+    /// 一般给 <see cref="Microsoft.UI.Reactor.TextCommandBarFlyoutElement"/>：
+    /// 剪贴板那几条命令由官方控件自己按选区状态填。
+    /// </para>
+    /// </remarks>
+    public Element? SelectionFlyout { get; init; }
 
     /// <summary>
     /// 键盘快捷键（XAML 的 <c>&lt;UIElement.KeyboardAccelerators&gt;
@@ -230,10 +295,43 @@ public record ElementModifiers
     public int? MaxLines { get; init; }
 
     /// <summary>
+    /// 超出容器时怎么截断（作用于 TextBlock）。只给 <c>MaxLines</c> 不给它，
+    /// 超出的行是<b>被裁掉</b>而不是"…"。
+    /// </summary>
+    public TextTrimming? TextTrimming { get; init; }
+
+    /// <summary>
+    /// 彩色字形（emoji 那类）按彩色画还是按单色画（作用于 TextBlock）。
+    /// 默认 <c>true</c>；关掉之后 emoji 会退化成单色轮廓。
+    /// </summary>
+    public bool? IsColorFontEnabled { get; init; }
+
+    /// <summary>字距，单位 1/1000 em（作用于 TextBlock / Control）。</summary>
+    public int? CharacterSpacing { get; init; }
+
+    /// <summary>
     /// Grid 附加位置（行/列/跨行/跨列），由 <c>.Grid(row: …)</c> 写入，
     /// 只有直接挂在 <c>Grid</c> 下的子元素会被应用。
     /// </summary>
     public Microsoft.UI.Reactor.GridAttached? Grid { get; init; }
+
+    /// <summary>
+    /// 在 <c>Canvas</c> 里的绝对坐标（<c>Canvas.Left</c> / <c>Top</c> / <c>ZIndex</c>），
+    /// 由 <c>.Canvas(left: …)</c> 写入，只有直接挂在 <c>Canvas</c> 下的子元素会被应用。
+    /// </summary>
+    public Microsoft.UI.Reactor.CanvasAttached? Canvas { get; init; }
+
+    /// <summary>
+    /// 在 <c>VariableSizedWrapGrid</c> 里占几格，由 <c>.WrapSpan(rowSpan: …)</c> 写入。
+    /// 该面板只认跨格、不认行列号，所以这里没有 Row / Column。
+    /// </summary>
+    public Microsoft.UI.Reactor.WrapSpanAttached? WrapSpan { get; init; }
+
+    /// <summary>
+    /// 在 <c>RelativePanel</c> 里的相对关系，由 <c>.Relative(below: …)</c> 写入。
+    /// 兄弟类字段存的是同层子元素的<b>下标</b>（见 <see cref="Microsoft.UI.Reactor.RelativeAttached"/>）。
+    /// </summary>
+    public Microsoft.UI.Reactor.RelativeAttached? Relative { get; init; }
 
     /// <summary>本元素向其子树提供的 Context 值（见 <see cref="Context{T}"/>）。</summary>
     public IReadOnlyDictionary<ContextBase, object?>? ContextValues { get; init; }
@@ -264,6 +362,7 @@ public record ElementModifiers
         AutomationName = other.AutomationName ?? AutomationName,
         AutomationId = other.AutomationId ?? AutomationId,
         ToolTip = other.ToolTip ?? ToolTip,
+        ToolTipContent = other.ToolTipContent ?? ToolTipContent,
         Backdrop = other.Backdrop ?? Backdrop,
         Uid = other.Uid ?? Uid,
         Shadow = other.Shadow ?? Shadow,
@@ -272,8 +371,11 @@ public record ElementModifiers
         IsTabStop = other.IsTabStop ?? IsTabStop,
         AllowFocusOnInteraction = other.AllowFocusOnInteraction ?? AllowFocusOnInteraction,
         FocusOnMount = other.FocusOnMount ?? FocusOnMount,
+        FocusToken = other.FocusToken ?? FocusToken,
         AccessKey = other.AccessKey ?? AccessKey,
         ContextFlyout = other.ContextFlyout ?? ContextFlyout,
+        ContextMenu = other.ContextMenu ?? ContextMenu,
+        SelectionFlyout = other.SelectionFlyout ?? SelectionFlyout,
         KeyboardAccelerators = other.KeyboardAccelerators ?? KeyboardAccelerators,
         OnKeyDown = other.OnKeyDown ?? OnKeyDown,
         OnKeyUp = other.OnKeyUp ?? OnKeyUp,
@@ -292,10 +394,16 @@ public record ElementModifiers
         FontWeight = other.FontWeight ?? FontWeight,
         TextAlignment = other.TextAlignment ?? TextAlignment,
         MaxLines = other.MaxLines ?? MaxLines,
+        TextTrimming = other.TextTrimming ?? TextTrimming,
+        IsColorFontEnabled = other.IsColorFontEnabled ?? IsColorFontEnabled,
+        CharacterSpacing = other.CharacterSpacing ?? CharacterSpacing,
         IsTitleBar = other.IsTitleBar ?? IsTitleBar,
         RequestedTheme = other.RequestedTheme ?? RequestedTheme,
         OwnsTitleBar = other.OwnsTitleBar ?? OwnsTitleBar,
         Grid = other.Grid ?? Grid,
+        Canvas = other.Canvas ?? Canvas,
+        WrapSpan = other.WrapSpan ?? WrapSpan,
+        Relative = other.Relative ?? Relative,
         ContextValues = other.ContextValues ?? ContextValues,
     };
 }

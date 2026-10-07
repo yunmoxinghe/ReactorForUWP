@@ -65,7 +65,8 @@ public sealed class InputsPage : Component
                 TextBlock($"OnChanged 次数：{uidHits}（挂载时不该涨）；当前值：{uidText}").Caption(),
                 Button("回调计数归零", () => setUidHits(0)),
 
-                ComboBox(Colors, Optional<int>.Of(combo), setCombo),
+                ComboBox(Colors, Optional<int>.Of(combo), setCombo)
+                    .AutomationName("颜色选择"),
                 TextBlock($"选中：{Colors[combo]}").Caption(),
 
                 ToggleSwitch(Optional<bool>.Of(isOn), setIsOn, "开", "关", "开关"),

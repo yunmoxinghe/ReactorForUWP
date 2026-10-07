@@ -29,6 +29,21 @@ public sealed record PasswordBoxElement(
 
     /// <summary>是否显示"显示密码"按钮（XAML 的 <c>IsPasswordRevealButtonEnabled</c>）。</summary>
     public bool? IsPasswordRevealButtonEnabled { get; init; }
+
+    /// <summary>
+    /// 掩码字符（XAML 的 <c>PasswordChar</c>），默认官方的圆点 <c>●</c>。
+    /// </summary>
+    /// <remarks>
+    /// <b>只取第一个字符</b>：官方属性是 <c>string</c> 但只用一个字符，给了
+    /// 多字符它取头一个。所以传 <c>"*"</c> 得到星号掩码，传 <c>"abc"</c> 得到
+    /// 三个 <c>a</c>——不是报错，是"按第一个字符铺满"。
+    /// <para>
+    /// 它<b>不改</b> <c>Password</c> 的内容：<c>Password</c> 里存的始终是明文，
+    /// 掩码只在显示层。这一点和 <c>MaxLength</c> 不一样（后者可能动到已有内容，
+    /// 所以那一处开了静默窗）。
+    /// </para>
+    /// </remarks>
+    public string? PasswordChar { get; init; }
 }
 
 /// <summary>
@@ -49,6 +64,16 @@ public sealed record AutoSuggestBoxElement(
     public string? PlaceholderText { get; init; }
     public string? Header { get; init; }
 
+    /// <summary>
+    /// 点了候选之后要不要把它填进输入框（官方 <c>UpdateTextOnSelect</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 默认 <c>true</c>。关掉它，点候选<b>仍然会抛</b>
+    /// <see cref="OnQuerySubmitted"/>（带 <c>ChosenSuggestion</c>），只是框里的字不变——
+    /// 适合"输入是筛选条件、候选是跳转目标"那种用法。
+    /// </remarks>
+    public bool UpdateTextOnSelect { get; init; } = true;
+
     /// <summary>文本变化（官方 <c>TextChanged</c>）。参数是当前文本。</summary>
     public Action<string>? OnTextChanged { get; init; }
 
@@ -61,6 +86,21 @@ public sealed record AutoSuggestBoxElement(
     /// 选中某个候选（官方 <c>SuggestionChosen</c>）。参数是该项（这里是字符串）。
     /// </summary>
     public Action<string>? OnSuggestionChosen { get; init; }
+
+    /// <summary>
+    /// 框里那个搜索图标（XAML 的 <c>QueryIcon</c>）。收 <c>FontIcon</c> /
+    /// <c>BitmapIcon</c> / <c>SymbolIcon</c>。
+    /// </summary>
+    /// <remarks>
+    /// 官方这个属性的类型是 <c>IconElement</c>（<b>不是</b> <c>IconSource</c>）——
+    /// 与 <c>InfoBadge.IconSource</c>、<c>TabViewItem.IconSource</c> 那两处不一样，
+    /// 它是真的可视元素，所以这里不再做"元素 → Source"的翻译，直接物化。
+    /// <para>
+    /// 它是<b>内容槽</b>而不是值：元素每帧都是新的，按"引用变了才换"逐帧比较会
+    /// 每帧换一次实例（与图标那一族的既定写法一致，见 <c>Handlers.Icons.cs</c>）。
+    /// </para>
+    /// </remarks>
+    public Element? QueryIcon { get; init; }
 }
 
 /// <summary>
@@ -96,4 +136,27 @@ public sealed record NumberBoxElement(
 
     /// <summary>小数位数（<c>NumberFormatter</c> 的简化入口，null = 不限）。</summary>
     public int? DecimalPlaces { get; init; }
+
+    /// <summary>
+    /// 接受表达式（官方 <c>AcceptsExpression</c>）：输入 <c>1+2*3</c> 这类算式，
+    /// 失焦时算出结果填回去。
+    /// </summary>
+    /// <remarks>
+    /// 它是"官方替你算"，不是"本框架帮你 parse"：算式由 WinUI 的
+    /// <c>NumberBox</c> 自己求值（走的是它内部那套计算器），算不出来时按
+    /// <see cref="ValidationMode"/> 处置。这条属性开了之后，<c>ValueChanged</c>
+    /// 回调里拿到的<b>已经是算完的数值</b>。
+    /// </remarks>
+    public bool? AcceptsExpression { get; init; }
+
+    /// <summary>
+    /// 输入不合法时怎么办（官方 <c>ValidationMode</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <c>InvalidInputOverwritten</c>（默认）：越界 / 非法的值被改写成边界值或
+    /// <c>NaN</c>；<c>Disabled</c>：什么都不做，<c>Value</c> 保持原样、
+    /// 也不回调——于是"输入了 999 但界面还是 100"会真的发生，这是官方给的
+    /// 那一档，不是 bug。
+    /// </remarks>
+    public MuxControls.NumberBoxValidationMode? ValidationMode { get; init; }
 }

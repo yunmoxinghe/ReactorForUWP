@@ -37,6 +37,11 @@ internal sealed class PasswordBoxHandler : ElementHandler<PasswordBoxElement, Pa
             native.IsPasswordRevealButtonEnabled = reveal;
         }
 
+        if (element.PasswordChar is { } mask)
+        {
+            native.PasswordChar = mask;
+        }
+
         if (element.Value.HasValue)
         {
             native.Password = element.Value.Value ?? string.Empty;
@@ -76,6 +81,14 @@ internal sealed class PasswordBoxHandler : ElementHandler<PasswordBoxElement, Pa
             control.IsPasswordRevealButtonEnabled != reveal)
         {
             control.IsPasswordRevealButtonEnabled = reveal;
+        }
+
+        // 掩码只在显示层：改它不动 Password 的内容（与上面 MaxLength 那一族不同），
+        // 所以这里不需要静默窗。
+        if (newElement.PasswordChar is { } mask &&
+            !string.Equals(control.PasswordChar, mask, StringComparison.Ordinal))
+        {
+            control.PasswordChar = mask;
         }
 
         if (newElement.Value.HasValue)
@@ -164,6 +177,8 @@ internal sealed class AutoSuggestBoxHandler : ElementHandler<AutoSuggestBoxEleme
             Header = element.Header,
         };
 
+        ApplyQueryIcon(native, element.QueryIcon);
+
         if (element.Text.HasValue)
         {
             native.Text = element.Text.Value ?? string.Empty;
@@ -189,6 +204,19 @@ internal sealed class AutoSuggestBoxHandler : ElementHandler<AutoSuggestBoxEleme
             newElement.PlaceholderText,
             value => control.PlaceholderText = value ?? string.Empty);
         PropWriter.Set(oldElement.Header, newElement.Header, value => control.Header = value);
+
+        // 只决定"点候选时填不填框"，本身不改 Text（那一笔是用户点候选写的，
+        // 而且它走的是 SuggestionChosen → 官方自己赋值那条路，不是这里这一笔）。
+        PropWriter.Set(
+            oldElement.UpdateTextOnSelect,
+            newElement.UpdateTextOnSelect,
+            value => control.UpdateTextOnSelect = value);
+
+        // 图标是内容槽：比形状，不比引用（理由见 IconElements.SameShape）。
+        if (!IconElements.SameShape(oldElement.QueryIcon, newElement.QueryIcon))
+        {
+            ApplyQueryIcon(control, newElement.QueryIcon);
+        }
 
         if (newElement.Text.HasValue)
         {
@@ -217,6 +245,15 @@ internal sealed class AutoSuggestBoxHandler : ElementHandler<AutoSuggestBoxEleme
         TextEcho.Forget(control);
         Rebind(control, null);
         Carriers.Remove(control);
+    }
+
+    /// <summary>
+    /// 搜索图标（<c>QueryIcon</c>）：官方这个槽位收的是 <c>IconElement</c>，
+    /// 这里是直接物化，不是"元素 → IconSource"的翻译。
+    /// </summary>
+    private static void ApplyQueryIcon(AutoSuggestBox control, Element? icon)
+    {
+        control.QueryIcon = icon is null ? null : IconElements.From(icon);
     }
 
     private static void SyncSuggestions(ItemCollection target, IReadOnlyList<string>? items)
@@ -407,6 +444,19 @@ internal sealed class NumberBoxHandler : ElementHandler<NumberBoxElement, MuxCon
         if (element.IsWrapEnabled is { } wrap && control.IsWrapEnabled != wrap)
         {
             control.IsWrapEnabled = wrap;
+        }
+
+        if (element.AcceptsExpression is { } expression && control.AcceptsExpression != expression)
+        {
+            control.AcceptsExpression = expression;
+        }
+
+        // ValidationMode 也会动 Value：从 Disabled 切到 InvalidInputOverwritten 时，
+        // 控件会拿当前（此前没被纠正过的）文本重新走一遍校验，越界就被改写成边界值
+        // —— 那一发同样落在静默窗里（见 Update 里那段关于"一次 Expect 装不下两发"）。
+        if (element.ValidationMode is { } validation && control.ValidationMode != validation)
+        {
+            control.ValidationMode = validation;
         }
 
         if (element.DecimalPlaces is { } places)

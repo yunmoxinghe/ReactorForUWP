@@ -51,6 +51,8 @@
     <Compile Include="RebuildEchoSim.cs" />
     <Compile Include="RebuildEchoTests.cs" />
     <Compile Include="EchoContractTests.cs" />
+    <!-- 示例画廊的索引契约：展示的源码必须真实存在且与组件对得上（纯文件扫描） -->
+    <Compile Include="GalleryIndexTests.cs" />
   </ItemGroup>
 
   <ItemGroup>

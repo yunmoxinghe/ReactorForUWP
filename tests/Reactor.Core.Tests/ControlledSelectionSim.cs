@@ -66,7 +66,18 @@ internal sealed class FakeSelectionControl
     public void Load()
     {
         IsLoaded = true;
-        _internal = SelectedIndex;
+
+        // cpp:127 在置 m_blockSelecting=false 之后<b>紧跟一次</b> UpdateSelectedIndex()
+        // 自愈：按依赖属性把内部选中态补回来。这一句是真机日志里
+        // "未就绪，吞 N"的来源——它抛事件的时候，控件自身的 Loaded 还没派发到
+        // 框架的就绪闸，于是 IsReady 仍是 false。
+        // 少了这一句，模型里"未就绪期间收到事件"这件事根本不会发生，
+        // 与真机日志对不上，也就造不出需要补发的场景。
+        if (_internal != SelectedIndex)
+        {
+            _internal = SelectedIndex;
+            Changed?.Invoke(SelectedIndex, true);
+        }
     }
 
     /// <summary>框架的受控下发：写依赖属性。</summary>
@@ -232,6 +243,10 @@ internal sealed class ControlledSelectionSim
     private bool _restorePending;
     private int _restoreExpected;
 
+    // 未就绪期间记下的那一发，等进树补发（对应 handler 的 Deferred 表）。
+    private bool _hasDeferred;
+    private int _deferred;
+
     /// <summary>进过用户回调的次数。</summary>
     public int CallbackCount { get; private set; }
 
@@ -332,6 +347,21 @@ internal sealed class ControlledSelectionSim
     public bool GuardRestoreOnUserValue { get; init; } = true;
 
     /// <summary>
+    /// 未就绪期间被吞掉的那一发，要不要<b>记下来、等进树后补发</b>。<b>默认开</b>。
+    /// </summary>
+    /// <remarks>
+    /// <b>2026-10 的 Heisenbug：这一条不设，"点了没反应"就只在开着日志时消失。</b>
+    /// 真机 A/B（同一份代码，唯一变量是日志开关）：开日志 11 次点击全部落盘，
+    /// 关日志一次都没落盘。原因是 <c>ReactorLog.Persist</c> 每记一条都要同步
+    /// 开合一次文件、且跑在 UI 线程上，这段等待把"已可见但还没 Loaded"的窗口
+    /// 拖了过去；日志一关，窗口比点击活得久，那一发就被"未就绪"静默吞掉。
+    /// <para>
+    /// 关掉它必须红（INV12 的反向对照）。
+    /// </para>
+    /// </remarks>
+    public bool DeferNotReadyClick { get; init; } = true;
+
+    /// <summary>
     /// 复现<b>旧</b>行为：受控写入<b>无条件</b>登记回声期望（默认 false，即已修）。
     /// </summary>
     /// <remarks>
@@ -391,7 +421,38 @@ internal sealed class ControlledSelectionSim
         ApplyControlled();
     }
 
-    /// <summary>控件进可视树。</summary>
+    /// <summary>只有<b>内部 repeater</b> 进树。真机上它早于控件自身的 Loaded。</summary>
+    /// <remarks>
+    /// 这一刻起 WinUI 已经能接受选中、也已经开始抛事件（先是自愈那一发），
+    /// 但框架的就绪标记 <c>_ready</c> 要等控件自己的 Loaded 派发到才置上。
+    /// 中间这段就是"看得见、点得到，但框架认为没就绪"的窗口。
+    /// </remarks>
+    public void BeginRepeaterLoad()
+    {
+        _ctl.Load();
+    }
+
+    /// <summary>控件自身的 Loaded 派发到框架：就绪标记此刻才置上。</summary>
+    public void CompleteLoad()
+    {
+        if (IsLoaded)
+        {
+            return;
+        }
+
+        _ready = true;
+        IsLoaded = true;
+        _trace.Add("Loaded");
+
+        if (FlushDeferred())
+        {
+            return;
+        }
+
+        ApplyControlled();
+    }
+
+    /// <summary>控件进可视树（两段连着走，不留窗口）。</summary>
     public void Load()
     {
         if (IsLoaded)
@@ -404,8 +465,51 @@ internal sealed class ControlledSelectionSim
         IsLoaded = true;
         _trace.Add("Loaded");
 
+        // 补发排在重放之前：此刻若先把受控旧值写回去，控件就不再停在用户点的
+        // 那个值上，下面的复查（current != pending）随即判不成立，那次点击就真丢了。
+        if (FlushDeferred())
+        {
+            return;
+        }
+
         // 框架的 Loaded 兜底：把受控目标值再补一次（幂等）。
         ApplyControlled();
+    }
+
+    /// <summary>
+    /// 把未就绪期间记下的那一发补发给用户回调（兑现前复查）。
+    /// 对应真代码 <c>ComboBoxHandler.FlushDeferred</c> / <c>RadioButtonsHandler.FlushDeferred</c>。
+    /// </summary>
+    private bool FlushDeferred()
+    {
+        if (!_hasDeferred)
+        {
+            return false;
+        }
+
+        var pending = _deferred;
+        _hasDeferred = false;
+
+        var target = _hasTarget ? _target : (int?)null;
+
+        if (!SelectionGate.ShouldFlushDeferred(pending, _ctl.SelectedIndex, target))
+        {
+            _trace.Add($"  补发收手：控件停在 {_ctl.SelectedIndex}，记下的是 {pending}");
+            return false;
+        }
+
+        _trace.Add($"  就绪后补发 {pending}");
+        Report(pending);
+        return true;
+    }
+
+    /// <summary>把一发值交到用户回调并同步 state——补发与正常放行共用这一条出口。</summary>
+    private void Report(int value)
+    {
+        CallbackCount++;
+        CallbackValues.Add(value);
+        _trace.Add($"  补发回调 {value}");
+        SetStateCore(value);
     }
 
     /// <summary>用户点击第 <paramref name="index"/> 项。</summary>
@@ -728,6 +832,20 @@ internal sealed class ControlledSelectionSim
         {
             Suppressed++;
             _trace.Add($"  event {value} real={hasRealItem} → 吞（{SelectionGate.Reason(verdict)}）");
+
+            // 未就绪这一道不能只是丢掉：控件此刻常常已经可见、可点（折叠的
+            // SettingsExpander 一展开就是这种情形），那一次点击是真实意图。
+            if (verdict == SelectionVerdict.NotReady && DeferNotReadyClick)
+            {
+                var target = _hasTarget ? _target : (int?)null;
+
+                if (SelectionGate.ShouldDeferNotReady(value, target))
+                {
+                    _deferred = value;
+                    _hasDeferred = true;
+                    _trace.Add($"  记下 {value}，进树后补发");
+                }
+            }
 
             // 受控语义：这个值由 state 说了算。事件照旧吞掉（绝不能把 state 打成 -1），
             // 但"取消选中"这一发会把控件拨到 -1，而它<b>不是用户意图</b>——

@@ -43,6 +43,22 @@ public sealed record ContentDialogElement(
     public ContentDialogButton DefaultButton { get; init; } = ContentDialogButton.Primary;
 
     /// <summary>
+    /// 是否铺满整窗（官方 <c>FullSizeDesired</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <b>它是"申请"不是"保证"。</b>官方按可用高度决定给不给：窗口不够高时
+    /// 这一笔会被忽略，弹窗仍是常规尺寸。所以别用它来"确保"大弹窗，
+    /// 内容真要放很多东西时该做的是内容自己能滚。
+    /// </remarks>
+    public bool FullSizeDesired { get; init; }
+
+    /// <summary>主按钮可不可用（官方 <c>IsPrimaryButtonEnabled</c>）。</summary>
+    public bool IsPrimaryButtonEnabled { get; init; } = true;
+
+    /// <summary>次按钮可不可用（官方 <c>IsSecondaryButtonEnabled</c>）。</summary>
+    public bool IsSecondaryButtonEnabled { get; init; } = true;
+
+    /// <summary>
     /// 弹窗样式键，默认 <c>DefaultContentDialogStyle</c>（WinUI 2 的
     /// <c>XamlControlsResources</c> 提供）。找不到就保持原生默认外观。
     /// </summary>
@@ -117,6 +133,9 @@ public static class ReactorDialog
         var dialog = new ContentDialog
         {
             DefaultButton = element.DefaultButton,
+            FullSizeDesired = element.FullSizeDesired,
+            IsPrimaryButtonEnabled = element.IsPrimaryButtonEnabled,
+            IsSecondaryButtonEnabled = element.IsSecondaryButtonEnabled,
         };
 
         if (element.StyleKey is { Length: > 0 } key)

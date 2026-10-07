@@ -4,6 +4,7 @@ using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Windows.UI.Core;
 using Windows.UI.Xaml;
+using Windows.UI.Xaml.Automation;
 using Windows.UI.Xaml.Controls;
 using Windows.UI.Xaml.Media;
 using Windows.UI.Xaml.Media.Imaging;
@@ -267,12 +268,20 @@ internal sealed class ComboBoxHandler : ElementHandler<ComboBoxElement, ComboBox
     private static readonly WeakTable<ComboBox, bool> Rebuilding = new();
     private static readonly WeakTable<ComboBox, bool> RestorePending = new();
 
+    /// <summary>
+    /// 未就绪期间被吞掉、但值不是受控目标的那一发，记下来等进树补发。
+    /// 判据见 <see cref="SelectionGate.ShouldDeferNotReady"/>。
+    /// </summary>
+    private static readonly WeakTable<ComboBox, int> Deferred = new();
+
     protected override ComboBox Mount(Reconciler reconciler, ComboBoxElement element)
     {
         var combo = new ComboBox
         {
             Header = element.Header,
             PlaceholderText = element.PlaceholderText ?? string.Empty,
+            IsEditable = element.IsEditable,
+            IsTextSearchEnabled = element.IsTextSearchEnabled,
         };
 
         foreach (var item in element.Items ?? Array.Empty<string>())
@@ -286,6 +295,13 @@ internal sealed class ComboBoxHandler : ElementHandler<ComboBoxElement, ComboBox
 
         ReadyGate.Arm(combo, ctl =>
         {
+            // 补发排在重放之前：进树之前的那一次真实点击先交出去，
+            // 否则重放会把它盖回受控旧值（理由见 RadioButtonsHandler.Mount 的注释）。
+            if (FlushDeferred(ctl))
+            {
+                return;
+            }
+
             if (Targets.TryGetValue(ctl, out var target))
             {
                 ApplySelectedIndex(ctl, target.Index);
@@ -307,6 +323,15 @@ internal sealed class ComboBoxHandler : ElementHandler<ComboBoxElement, ComboBox
             newElement.PlaceholderText,
             value => control.PlaceholderText = value ?? string.Empty);
 
+        // 可编辑 / 敲字跳转都是<b>模式开关</b>，不是往 SelectedIndex 上写值：
+        // 打开可编辑不会把下标改成"文本"，关掉敲字跳转也不会动当前选中。
+        // 因此这两笔与 Header 那一族同形，登记为惰性即可（见契约第九道的登记表）。
+        PropWriter.Set(oldElement.IsEditable, newElement.IsEditable, value => control.IsEditable = value);
+        PropWriter.Set(
+            oldElement.IsTextSearchEnabled,
+            newElement.IsTextSearchEnabled,
+            value => control.IsTextSearchEnabled = value);
+
         if (!PropWriter.SequenceEqual(oldElement.Items, newElement.Items))
         {
             ReplaceItems(control, newElement.Items);
@@ -325,6 +350,7 @@ internal sealed class ComboBoxHandler : ElementHandler<ComboBoxElement, ComboBox
         Targets.Remove(control);
         Rebuilding.Remove(control);
         RestorePending.Remove(control);
+        Deferred.Remove(control);
     }
 
     /// <summary>
@@ -462,6 +488,19 @@ internal sealed class ComboBoxHandler : ElementHandler<ComboBoxElement, ComboBox
                     c => c.Items.Count, c => c.SelectedIndex, ApplySelectedIndex);
             }
 
+            // 同 RadioButtons：未就绪期间那一次真实点击记下来，进树后补发。
+            if (verdict == SelectionVerdict.NotReady)
+            {
+                var target = Targets.TryGetValue(control, out var t) ? t.Index : (int?)null;
+
+                if (SelectionGate.ShouldDeferNotReady(value, target))
+                {
+                    Deferred.Set(control, value);
+                    ReactorLog.Gate(
+                        $"ComboBox{tag} 未就绪但值 {value} 不是受控目标 → 记下，进树后补发");
+                }
+            }
+
             return;
         }
 
@@ -472,6 +511,41 @@ internal sealed class ComboBoxHandler : ElementHandler<ComboBoxElement, ComboBox
 
         ReactorLog.Pass($"ComboBox{tag} → 用户回调 SelectedIndex={value}");
         callback?.Invoke(value);
+    }
+
+    /// <summary>
+    /// 把未就绪期间记下的那一发补发给用户回调（若此刻还成立）。
+    /// 与 <c>RadioButtonsHandler.FlushDeferred</c> 同律，详见那边的注释。
+    /// </summary>
+    private static bool FlushDeferred(ComboBox control)
+    {
+        if (!Deferred.TryGetValue(control, out var pending))
+        {
+            return false;
+        }
+
+        Deferred.Remove(control);
+
+        Callbacks.TryGetValue(control, out var callback);
+
+        if (callback is null)
+        {
+            return false;
+        }
+
+        var current = control.SelectedIndex;
+        var target = Targets.TryGetValue(control, out var t) ? t.Index : (int?)null;
+
+        if (!SelectionGate.ShouldFlushDeferred(pending, current, target))
+        {
+            ReactorLog.Gate(
+                $"ComboBox{CtlId.Tag(control)} 补发收手：控件停在 {current}，记下的是 {pending}");
+            return false;
+        }
+
+        ReactorLog.Pass($"ComboBox{CtlId.Tag(control)} 就绪后补发 SelectedIndex={pending}");
+        callback(pending);
+        return true;
     }
 
 
@@ -741,6 +815,13 @@ internal sealed class RadioButtonsHandler : ElementHandler<RadioButtonsElement, 
     private static readonly WeakTable<MuxControls.RadioButtons, bool> Rebuilding = new();
     private static readonly WeakTable<MuxControls.RadioButtons, bool> RestorePending = new();
 
+    /// <summary>
+    /// 未就绪期间被"未就绪"那道闸吞掉、但<b>值不是受控目标</b>的那一发。
+    /// 记下来，等 <see cref="ReadyGate"/> 说它进树了再补发（判据见
+    /// <see cref="SelectionGate.ShouldDeferNotReady"/>）。
+    /// </summary>
+    private static readonly WeakTable<MuxControls.RadioButtons, int> Deferred = new();
+
     protected override MuxControls.RadioButtons Mount(
         Reconciler reconciler,
         RadioButtonsElement element)
@@ -760,8 +841,20 @@ internal sealed class RadioButtonsHandler : ElementHandler<RadioButtonsElement, 
 
         // 进树那一刻：WinUI 自己会按依赖属性自愈，这里重放一次是双保险
         // （幂等——选中值已经对了就什么都不做）。
+        //
+        // 但<b>补发排在重放之前</b>：从挂载到进树这段时间里，用户可能已经看得见
+        // 这个控件并且点过了（折叠的 SettingsExpander 一展开就是这种情形），
+        // 那一发被"未就绪"吞掉、值记在 Deferred 里。此刻若先重放受控旧值，
+        // 会把控件拨回去，补发的复查（current != pending）随即判定不成立，
+        // 那次点击就真的丢了。先补发：把用户的值交出去，state 一改，
+        // 紧随其后的渲染会把受控值下发成同一个值，两边收敛。
         ReadyGate.Arm(control, ctl =>
         {
+            if (FlushDeferred(ctl))
+            {
+                return;
+            }
+
             if (Targets.TryGetValue(ctl, out var target))
             {
                 ApplySelectedIndex(ctl, target.Index);
@@ -769,6 +862,46 @@ internal sealed class RadioButtonsHandler : ElementHandler<RadioButtonsElement, 
         });
 
         return control;
+    }
+
+    /// <summary>
+    /// 把未就绪期间记下的那一发补发给用户回调（若此刻还成立）。
+    /// </summary>
+    /// <returns>是否真的补发了。补发了就别再重放受控旧值——那会把它盖回去。</returns>
+    /// <remarks>
+    /// 回调取 <c>Callbacks</c> 表里的<b>当前</b>那份，不用 Arm 时捕获的那份：
+    /// 从挂载到进树之间可能已经 <c>Update</c> 过（<see cref="Rebind"/> 换过回调），
+    /// 捕获闭包会拿着过期引用，轻则调到旧闭包、重则拿到 null。
+    /// </remarks>
+    private static bool FlushDeferred(MuxControls.RadioButtons control)
+    {
+        if (!Deferred.TryGetValue(control, out var pending))
+        {
+            return false;
+        }
+
+        Deferred.Remove(control);
+
+        Callbacks.TryGetValue(control, out var callback);
+
+        if (callback is null)
+        {
+            return false;
+        }
+
+        var current = control.SelectedIndex;
+        var target = Targets.TryGetValue(control, out var t) ? t.Index : (int?)null;
+
+        if (!SelectionGate.ShouldFlushDeferred(pending, current, target))
+        {
+            ReactorLog.Gate(
+                $"RadioButtons{CtlId.Tag(control)} 补发收手：控件停在 {current}，记下的是 {pending}");
+            return false;
+        }
+
+        ReactorLog.Pass($"RadioButtons{CtlId.Tag(control)} 就绪后补发 SelectedIndex={pending}");
+        callback(pending);
+        return true;
     }
 
     protected override void Update(
@@ -797,6 +930,7 @@ internal sealed class RadioButtonsHandler : ElementHandler<RadioButtonsElement, 
         Targets.Remove(control);
         Rebuilding.Remove(control);
         RestorePending.Remove(control);
+        Deferred.Remove(control);
     }
 
     /// <summary>
@@ -937,6 +1071,21 @@ internal sealed class RadioButtonsHandler : ElementHandler<RadioButtonsElement, 
                 SelectionRestore.Schedule(
                     control, RestorePending, Targets,
                     c => c.Items.Count, c => c.SelectedIndex, ApplySelectedIndex);
+            }
+
+            // 未就绪这一道<b>不能只是丢掉</b>：控件此刻常常已经可见、可点
+            // （折叠的 SettingsExpander 展开的那一瞬间就是），那一次点击是真实意图。
+            // 判据与复查都在 SelectionGate 里（纯函数，有契约测试守着）。
+            if (verdict == SelectionVerdict.NotReady)
+            {
+                var target = Targets.TryGetValue(control, out var t) ? t.Index : (int?)null;
+
+                if (SelectionGate.ShouldDeferNotReady(value, target))
+                {
+                    Deferred.Set(control, value);
+                    ReactorLog.Gate(
+                        $"RadioButtons{tag} 未就绪但值 {value} 不是受控目标 → 记下，进树后补发");
+                }
             }
 
             return;
@@ -1272,6 +1421,32 @@ internal abstract class ItemsViewHandler<TElement, TControl> : ElementHandler<TE
             control.Items.Add(reconciler.Build(item));
         }
 
+        // 项容器（ListViewItem / GridViewItem）的名字。
+        //
+        // 为什么需要这一步：UWP 的 ListViewItemAutomationPeer 会**从内容里的文本**
+        // 推导容器名，但它不往「本身已经是控件」的内容里递归。实测对照——
+        //   项是一个 TextBlock      → 容器名 = 那段文本（自动就有）
+        //   项是一个 SettingsCard   → 容器名 = 空（读屏在列表里念出来是一片空白）
+        // 后者正是"卡片列表"的常见形状，所以容器名要显式传一次：容器继承项元素自己的
+        // AutomationProperties.Name（也就是 .AutomationName(...) 写下的那个值）。
+        //
+        // 用 ContainerContentChanging 而不是"建完项挨个设"：容器是**虚拟化懒生成**的，
+        // 屏外项在滚到之前根本没有容器对象，只有这个事件能覆盖到每一个。
+        // 复用（InRecycleQueue）走同一句写入：拿到新项时重新取名字，
+        // 新项没名字就设成 null —— 否则回收复用会把上一项的名字串到下一项头上。
+        //
+        // 订在 Initialize（每控件一次），所以进 SubscribeOnce 登记表而不是幂等窗。
+        control.ContainerContentChanging += static (_, args) =>
+        {
+            if (args.ItemContainer is null)
+            {
+                return;
+            }
+
+            var name = args.Item is UIElement item ? AutomationProperties.GetName(item) : null;
+            AutomationProperties.SetName(args.ItemContainer, string.IsNullOrEmpty(name) ? null : name);
+        };
+
         // 顺序不能反：先把带闸的事件处理器挂上，再写 SelectedIndex——
         // 这一次受控写回发出的 SelectionChanged 必须被认成回声，
         // 而不是"页面一出现就回调了一次 selected-item-changed"。
@@ -1492,6 +1667,9 @@ internal sealed class NavigationViewHandler : ElementHandler<NavigationViewEleme
     /// </remarks>
     private static readonly WeakTable<MuxControls.NavigationView, bool> Rebuilding = new();
 
+    /// <summary>每个导航条上当前挂着的搜索框（内容槽，见 <see cref="ApplySearchBox"/>）。</summary>
+    private static readonly WeakTable<MuxControls.NavigationView, UIElement> SearchBoxes = new();
+
     protected override MuxControls.NavigationView Mount(
         Reconciler reconciler,
         NavigationViewElement element)
@@ -1506,10 +1684,27 @@ internal sealed class NavigationViewHandler : ElementHandler<NavigationViewEleme
                 : MuxControls.NavigationViewBackButtonVisible.Collapsed,
             IsBackEnabled = element.IsBackEnabled,
             AlwaysShowHeader = element.AlwaysShowHeader,
+            IsPaneToggleButtonVisible = element.IsPaneToggleButtonVisible,
             PaneDisplayMode = ToPaneMode(element.PaneDisplayMode),
         };
 
+        if (element.PaneTitle is { } paneTitle)
+        {
+            nav.PaneTitle = paneTitle;
+        }
+
+        if (element.CompactModeThresholdWidth is { } compact)
+        {
+            nav.CompactModeThresholdWidth = compact;
+        }
+
+        if (element.ExpandedModeThresholdWidth is { } expanded)
+        {
+            nav.ExpandedModeThresholdWidth = expanded;
+        }
+
         ApplyMenuItems(nav, element.MenuItems);
+        ApplySearchBox(reconciler, nav, null, element.SearchBox);
 
         // 顺序不能反：先把带闸的事件处理器挂上，再写受控值——
         // 与 ItemsViewHandler.Initialize 那条同一个道理。
@@ -1571,6 +1766,28 @@ internal sealed class NavigationViewHandler : ElementHandler<NavigationViewEleme
             control.AlwaysShowHeader = newElement.AlwaysShowHeader;
         }
 
+        if (oldElement.IsPaneToggleButtonVisible != newElement.IsPaneToggleButtonVisible)
+        {
+            control.IsPaneToggleButtonVisible = newElement.IsPaneToggleButtonVisible;
+        }
+
+        if (!Equals(oldElement.PaneTitle, newElement.PaneTitle))
+        {
+            control.PaneTitle = newElement.PaneTitle ?? string.Empty;
+        }
+
+        if (oldElement.CompactModeThresholdWidth != newElement.CompactModeThresholdWidth)
+        {
+            control.CompactModeThresholdWidth =
+                newElement.CompactModeThresholdWidth ?? control.CompactModeThresholdWidth;
+        }
+
+        if (oldElement.ExpandedModeThresholdWidth != newElement.ExpandedModeThresholdWidth)
+        {
+            control.ExpandedModeThresholdWidth =
+                newElement.ExpandedModeThresholdWidth ?? control.ExpandedModeThresholdWidth;
+        }
+
         // 下面这两处改动的作者都是我们，引发的选中重算却由 repeater 承载，
         // 到场时间在我们返回之后（源码依据见 <see cref="Rebuilding"/> 那段注释）。
         // 所以抑制用<b>持续标记</b>，并且开到受控值补发完才关——
@@ -1621,6 +1838,7 @@ internal sealed class NavigationViewHandler : ElementHandler<NavigationViewEleme
         }
 
         reconciler.PatchSingleChild(control, oldElement.Content, newElement.Content);
+        ApplySearchBox(reconciler, control, oldElement.SearchBox, newElement.SearchBox);
         Rebind(
             control,
             newElement.OnSelectedIndexChanged is null
@@ -1630,7 +1848,55 @@ internal sealed class NavigationViewHandler : ElementHandler<NavigationViewEleme
             newElement.OnBackRequested);
     }
 
-    /// <summary>SelectionChanged 回调包装：回读下标 == 框架刚写入的下标 → 是回声，不回调。</summary>
+    /// <summary>
+    /// 搜索框槽位（对应 XAML 的 <c>NavigationView.AutoSuggestBox</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <b>它是内容槽，不是值。</b>与 <c>SettingsCardHandlerBase</c> 的图标同一条规矩：
+    /// 每轮渲染都换一个新实例，用户正在输入的那点东西（框里的文本、候选列表的展开状态、
+    /// 键盘焦点）会被整套带走，现象是"打一个字搜索框就抖一下"。所以这里能就地 patch
+    /// 就 patch，只在元素类型换了才重建。
+    /// </remarks>
+    private static void ApplySearchBox(
+        Reconciler reconciler,
+        MuxControls.NavigationView control,
+        Element? oldBox,
+        Element? newBox)
+    {
+        if (newBox is null)
+        {
+            if (control.AutoSuggestBox is not null)
+            {
+                control.AutoSuggestBox = null;
+                SearchBoxes.Remove(control);
+            }
+
+            return;
+        }
+
+        var mounted = SearchBoxes.TryGetValue(control, out var current);
+        if (mounted && current is not null && oldBox is not null &&
+            Reconciler.CanPatch(oldBox, newBox))
+        {
+            reconciler.Patch(current, oldBox, newBox);
+            return;
+        }
+
+        // 官方这个属性只收 AutoSuggestBox（winmd 里就是这么签的）。给别的元素时忽略并
+        // 留痕，不抛——搜索框从来不是关键路径，为一个可选装饰框把整棵界面树带崩不值得。
+        if (reconciler.Build(newBox) is not AutoSuggestBox native)
+        {
+            ReactorApplication.Trace(
+                "[reactor] NavigationView.AutoSuggestBox 只收 AutoSuggestBox，" +
+                $"收到 {newBox.GetType().Name}，忽略");
+            return;
+        }
+
+        control.AutoSuggestBox = native;
+        SearchBoxes[control] = native;
+    }
+
+    /// <summary><see cref="SelectionChanged"/> 回调包装：回读下标 == 框架刚写入的下标 → 是回声，不回调。</summary>
     private static Action<int>? Guard(MuxControls.NavigationView control, Action<int> callback) =>
         value =>
         {
@@ -1696,6 +1962,7 @@ internal sealed class NavigationViewHandler : ElementHandler<NavigationViewEleme
         Callbacks.Remove(control);
         Targets.Remove(control);
         Rebuilding.Remove(control);
+        SearchBoxes.Remove(control);
     }
 
     private static void ApplyMenuItems(

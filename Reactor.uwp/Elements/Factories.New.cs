@@ -53,11 +53,19 @@ public static partial class Factories
 
     // ── 输入与选择 ─────────────────────────────────────────────
 
+    /// <param name="isEditable">可编辑：收起时那个框变成输入框。</param>
+    /// <param name="isTextSearchEnabled">敲字时跳到匹配的项（默认开）。</param>
     public static ComboBoxElement ComboBox(
         string[] items,
         Optional<int> selectedIndex = default,
-        Action<int>? onSelectedIndexChanged = null) =>
-        new(items, selectedIndex, onSelectedIndexChanged);
+        Action<int>? onSelectedIndexChanged = null,
+        bool isEditable = false,
+        bool isTextSearchEnabled = true) =>
+        new(items, selectedIndex, onSelectedIndexChanged)
+        {
+            IsEditable = isEditable,
+            IsTextSearchEnabled = isTextSearchEnabled,
+        };
 
     public static ToggleSwitchElement ToggleSwitch(
         Optional<bool> isOn = default,
@@ -82,17 +90,72 @@ public static partial class Factories
 
     // ── 进度与媒体 ─────────────────────────────────────────────
 
-    /// <summary>进度条。<paramref name="value"/> 为 null 表示不确定进度。</summary>
-    public static ProgressElement Progress(double? value = null) => new(value);
+    /// <summary>
+    /// 进度条。<paramref name="value"/> 为 null 表示<b>不确定</b>进度（一条来回扫的横条）。
+    /// </summary>
+    public static ProgressElement Progress(
+        double? value = null,
+        double minimum = 0,
+        double maximum = 100,
+        bool showError = false,
+        bool showPaused = false) =>
+        new(value) { Minimum = minimum, Maximum = maximum, ShowError = showError, ShowPaused = showPaused };
 
     /// <summary><see cref="Progress"/> 的别名（与 ProgressBar 控件同名，便于查找）。</summary>
-    public static ProgressElement ProgressBar(double? value = null) => new(value);
+    public static ProgressElement ProgressBar(
+        double? value = null,
+        double minimum = 0,
+        double maximum = 100,
+        bool showError = false,
+        bool showPaused = false) =>
+        Progress(value, minimum, maximum, showError, showPaused);
 
-    /// <summary>进度环。<paramref name="value"/> 为 null 表示不确定进度。</summary>
-    public static ProgressRingElement ProgressRing(double? value = null) => new(value);
+    /// <summary>
+    /// 进度环。<paramref name="value"/> 为 null 表示<b>不确定</b>进度（一直转的圈）。
+    /// </summary>
+    public static ProgressRingElement ProgressRing(
+        double? value = null,
+        double minimum = 0,
+        double maximum = 100,
+        bool isActive = true) =>
+        new(value) { Minimum = minimum, Maximum = maximum, IsActive = isActive };
+
+    /// <summary>
+    /// 徽章（WinUI 2.8 的 <c>InfoBadge</c>）。
+    /// </summary>
+    /// <param name="value">数字；<c>-1</c> 是官方"圆点"那一档（不显示数字）。</param>
+    /// <param name="icon">图标（<c>FontIcon</c> / <c>BitmapIcon</c>）；给了它就不显示数字。</param>
+    /// <param name="badgeStyle">
+    /// 预设样式：<c>"Informational"</c> / <c>"Success"</c> / <c>"Warning"</c> /
+    /// <c>"Critical"</c> / <c>"Attention"</c>。
+    /// </param>
+    /// <remarks>
+    /// <b>它挂在别人身上，不是一个独立站位的控件。</b>官方用法是把它放进某个
+    /// 容器的角落（<c>Grid</c> 的右上角、列表项的右侧），靠对齐与外边距定位——
+    /// 它没有"自己是谁的徽章"这层关系，位置完全由布局说了算。
+    /// </remarks>
+    public static InfoBadgeElement InfoBadge(
+        int value = -1,
+        Element? icon = null,
+        string badgeStyle = "Informational") =>
+        new() { Value = value, Icon = icon, BadgeStyle = badgeStyle };
 
     /// <summary>图片。<paramref name="source"/> 支持 ms-appx:///、http(s) 与相对路径。</summary>
-    public static ImageElement Image(string source) => new(source);
+    /// <param name="stretch">
+    /// 拉伸方式（XAML 的 <c>Stretch</c>）：<c>"None"</c> / <c>"Fill"</c> /
+    /// <c>"Uniform"</c> / <c>"UniformToFill"</c>。给不了就留 null（控件默认
+    /// <see cref="Stretch.Uniform"/>）。
+    /// </param>
+    /// <remarks>
+    /// <c>Width</c> / <c>Height</c> / <c>Stretch</c> 放在<b>尾部</b>：加进来之前写的
+    /// <c>Image("…")</c> 一行都不用改，而元素上这三个槽位 handler 一直都认。
+    /// </remarks>
+    public static ImageElement Image(
+        string source,
+        double? width = null,
+        double? height = null,
+        string? stretch = null) =>
+        new(source) { Width = width, Height = height, Stretch = stretch };
 
     // ── 集合与导航 ─────────────────────────────────────────────
 

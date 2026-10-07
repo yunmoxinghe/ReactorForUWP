@@ -209,7 +209,8 @@ public sealed class DiagnosticsPage : Component
                     {
                         setCombo(v);
                         setComboHits(comboHits + 1);
-                    }),
+                    })
+                        .AutomationName("ComboBox 示例选择"),
                     TextBlock($"state={combo}　回调 {comboHits} 次").Caption()),
 
                 // ── 4. ToggleSwitch ────────────────────────────────────────

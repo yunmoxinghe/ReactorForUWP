@@ -34,6 +34,41 @@ public sealed partial class App : ReactorApplication<MainPage>
     {
         ElementSound.Apply(AppSettings.Current.Sound);
 
+        // ── A/B 开关：LocalState\log-off.txt 存在就全关日志 ──────────────
+        //
+        // 用来验证一个具体假设：日志的落盘本身在改变时序，于是"有日志就正常、
+        // 没日志就点不动"——两个现象同源，不是玄学。
+        //
+        // 机制是确凿的，不是推测：ReactorLog.Persist 每次记一条 Info 都要
+        // new FileStream(Append) + StreamWriter 同步写一次 reactor-startup.log，
+        // 而且是**在 UI 线程上**。外加探针每 400ms 一次心跳转储。这些都是
+        // 毫秒级的同步等待，正好落在"控件已可见但还没 Loaded"那个窗口上：
+        // 窗口靠布局与展开动画的进度来关，被日志拖慢之后，用户点下去时
+        // 窗口多半已经关了 —— 于是有日志时怎么点都成。
+        //
+        // 判据：关掉日志后如果重现"点了没反应"，假设成立；
+        // 如果照样能点，就得回到"未就绪窗口"之外去找原因。
+        var quiet = System.IO.File.Exists(System.IO.Path.Combine(
+            Windows.Storage.ApplicationData.Current.LocalFolder.Path, "log-off.txt"));
+
+        if (quiet)
+        {
+            // Off 让 IsEnabled 对一切级别都返回 false：不进 Ring、不落盘。
+            ReactorLog.Level = ReactorLogLevel.Off;
+        }
+        else
+        {
+            // 把框架日志提到 Trace，并起一个定时器把内存缓冲按通道转储到
+            // probe-live.log：否则"闸门为什么吞掉这一发"那一行根本落不了盘
+            // （它是 Trace 级，框架只在 Info 及以上写文件）——排查"点了没反应"
+            // 时等于没有证据。放在建树之前：首帧的挂载/下发也要记进来。
+            Probe.StartDump();
+
+            // 自检：让应用自己在真实控件上点一遍，报告落在 selftest.log。
+            // 放在建树之后——它要等控件 Loaded 才动手，而那要先有树。
+            Probe.StartSelfTest();
+        }
+
         base.OnLaunched(args);
     }
 }

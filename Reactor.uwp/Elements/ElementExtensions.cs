@@ -156,6 +156,21 @@ public static partial class ElementExtensions
     public static T AutomationId<T>(this T el, string id) where T : Element =>
         Set(el, m => m with { AutomationId = id });
 
+    /// <summary>
+    /// 纯文本提示气泡（官方 <c>ToolTipService.ToolTip="…"</c>）。
+    /// </summary>
     public static T ToolTip<T>(this T el, string tip) where T : Element =>
         Set(el, m => m with { ToolTip = tip });
+
+    /// <summary>
+    /// 内容型提示气泡（官方 <c>&lt;ToolTipService.ToolTip&gt;…&lt;/ToolTipService.ToolTip&gt;</c>）。
+    /// </summary>
+    /// <param name="content">
+    /// 任意元素。给 <see cref="Tip(string, Element, PlacementMode, double?, double?, Action?, Action?)"/>
+    /// 造出来的气泡可以顺带定方位与回执；直接给一段内容（比如
+    /// <c>HStack(Image(...), TextBlock("…"))</c>）也认——那一条就是官方画廊里
+    /// "图文混排的提示"那一段的写法。
+    /// </param>
+    public static T ToolTip<T>(this T el, Element content) where T : Element =>
+        Set(el, m => m with { ToolTipContent = content });
 }

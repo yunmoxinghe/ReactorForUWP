@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Microsoft.UI.Reactor.Core;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
+using Windows.UI.Xaml.Controls.Primitives;
 using MuxControls = Microsoft.UI.Xaml.Controls;
 
 namespace Microsoft.UI.Reactor;
@@ -10,8 +11,22 @@ namespace Microsoft.UI.Reactor;
 /// <summary>文本节点。参数名对齐官方 Reactor（Content，不是 Text）。</summary>
 public sealed record TextBlockElement(string Content) : Element;
 
-/// <summary>按钮节点：点击回调直接以声明方式携带。</summary>
-public sealed record ButtonElement(string Label, Action? OnClick = null) : Element;
+/// <summary>
+/// 按钮节点：点击回调直接以声明方式携带。
+/// </summary>
+/// <remarks>
+/// <b><see cref="Content"/> 与 <see cref="Label"/> 二选一</b>，
+/// 对应 XAML 里同一个 <c>Button.Content</c> 的两种写法：
+/// <c>&lt;Button Content="文本"/&gt;</c> 与
+/// <c>&lt;Button&gt;&lt;StackPanel&gt;…&lt;/StackPanel&gt;&lt;/Button&gt;</c>。
+/// 后者是带图标按钮的官方形态（WinUI Gallery 那颗 "Content with icon" 就是这么写的），
+/// 因为 <c>Button</c> 本来就是 <c>ContentControl</c>。
+/// </remarks>
+public sealed record ButtonElement(string Label, Action? OnClick = null) : Element
+{
+    /// <summary>任意内容（图标 + 文字等）。给了它之后 <see cref="Label"/> 不再生效。</summary>
+    public Element? Content { get; init; }
+}
 
 /// <summary>
 /// 线性布局容器，对应 <see cref="StackPanel"/>。
@@ -37,7 +52,18 @@ public sealed record GroupElement(IReadOnlyList<Element?> Children) : Element;
 /// <summary>WinUI 2 的 InfoBar，用于验证 XamlControlsResources 纯代码加载链路。</summary>
 public sealed record InfoBarElement(
     string Message,
-    MuxControls.InfoBarSeverity Severity = MuxControls.InfoBarSeverity.Informational) : Element;
+    MuxControls.InfoBarSeverity Severity = MuxControls.InfoBarSeverity.Informational) : Element
+{
+    /// <summary>
+    /// 左侧那个等级图标显不显示（XAML 的 <c>IsIconVisible</c>，官方默认 <c>true</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 它<b>只管图标</b>：关掉之后文字照常显示，条子不会变窄——图标那一列是
+    /// 模板里的固定槽位，隐藏的是内容不是格子。想让消息顶到左边，官方给的
+    /// 手段是 <c>InfoBar</c> 上没有的（要改模板），别指望这一个开关。
+    /// </remarks>
+    public bool IsIconVisible { get; init; } = true;
+}
 
 /// <summary>
 /// 文本输入框。Value 默认 <see cref="Optional{T}.Unset"/>（非受控，控件自主持有文本）；
@@ -49,6 +75,32 @@ public sealed record TextBoxElement(
     string? PlaceholderText = null) : Element
 {
     public string? Header { get; init; }
+
+    /// <summary>
+    /// 回车是"换行"还是"确认"（官方 <c>AcceptsReturn</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <b>它是"多行输入框"这个形态的开关</b>，但只管回车键的语义：想让长文本真的
+    /// 折行还得再给 <c>.Wrap()</c>（<c>TextWrapping</c> 修饰器，落点是官方的
+    /// <c>TextBox.TextWrapping</c>）。两个一起给才是官方画廊里那个"多行输入框"。
+    /// </remarks>
+    public bool? AcceptsReturn { get; init; }
+
+    /// <summary>要不要拼写检查（官方 <c>IsSpellCheckEnabled</c>）。默认由控件决定（开）。</summary>
+    public bool? IsSpellCheckEnabled { get; init; }
+
+    /// <summary>最多几个字符（官方 <c>MaxLength</c>）。0 = 不限，这也是官方默认值。</summary>
+    public int? MaxLength { get; init; }
+
+    /// <summary>
+    /// 只读（官方 <c>IsReadOnly</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 只读与"不给 <c>OnChanged</c>"是两件事：前者<b>仍可选中、复制</b>，只是改不动；
+    /// 后者是完全不管文本。想"展示一段可复制的文本"用这个，别用禁用
+    /// （<c>.IsEnabled(false)</c> 会连选中复制一起禁掉）。
+    /// </remarks>
+    public bool? IsReadOnly { get; init; }
 }
 
 /// <summary>
@@ -65,7 +117,57 @@ public sealed record SliderElement(
     Optional<double> Value = default,
     double Min = 0,
     double Max = 100,
-    Action<double>? OnValueChanged = null) : Element;
+    Action<double>? OnValueChanged = null) : Element
+{
+    /// <summary>标题（官方 <c>Header</c>）。给了才显示——不给时控件不占那一行。</summary>
+    public string? Header { get; init; }
+
+    /// <summary>
+    /// 横向还是竖向（官方 <c>Orientation</c>，默认横向）。
+    /// </summary>
+    /// <remarks>
+    /// 竖滑时<b>必须给一个高度</b>（<c>.Height(...)</c>）：官方控件在竖向形态下按
+    /// 可用高度拉伸，放进 <c>VStack</c> 这种"按内容收缩"的容器里会被压成几条像素，
+    /// 症状很像"滑块消失了"。
+    /// </remarks>
+    public Orientation Orientation { get; init; } = Orientation.Horizontal;
+
+    /// <summary>
+    /// 键盘（方向键）与"点轨道"的步长（官方 <c>StepFrequency</c>，来自 <c>RangeBase</c>）。
+    /// 拖动<b>不</b>受它限制——那是 <see cref="SnapsTo"/> 的事。
+    /// </summary>
+    public double? StepFrequency { get; init; }
+
+    /// <summary>每隔多少画一个刻度（官方 <c>TickFrequency</c>）。0 = 不画。</summary>
+    public double? TickFrequency { get; init; }
+
+    /// <summary>刻度画在轨道内侧还是外侧（官方 <c>TickPlacement</c>）。</summary>
+    public TickPlacement? TickPlacement { get; init; }
+
+    /// <summary>
+    /// 拖动时吸附到什么（官方 <c>SnapsTo</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <c>StepValues</c> 按 <see cref="StepFrequency"/> 跳（默认 1），
+    /// <c>Ticks</c> 按 <see cref="TickFrequency"/> 画出来的那些刻度跳。
+    /// 官方默认是 <c>StepValues</c>，所以"给了刻度但拖动仍然连续"是默认行为，
+    /// 要"拖一下跳一格"得把这一项显式设成 <c>Ticks</c>。
+    /// </remarks>
+    public SliderSnapsTo? SnapsTo { get; init; }
+
+    /// <summary>
+    /// 值增大往哪边走（官方 <c>IsDirectionReversed</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 换的是<b>值增大的方向</b>，不是"当前值"：横向滑块默认左小右大，打开它变成
+    /// 右小左大（竖向则是下小上大）。<c>Min</c> / <c>Max</c> 与 <c>Value</c>
+    /// 本身一个都不动。
+    /// </remarks>
+    public bool IsDirectionReversed { get; init; }
+
+    /// <summary>拖动时拇指上那个数值气泡要不要出现（官方 <c>IsThumbToolTipEnabled</c>）。</summary>
+    public bool? IsThumbToolTipEnabled { get; init; }
+}
 
 /// <summary>
 /// 滚动容器，对应 <see cref="ScrollViewer"/>。参数名对齐官方（Child）。
@@ -99,4 +201,14 @@ public sealed record ScrollViewerElement(
     /// 模板的设置页显式写 <c>Stretch</c>：内容块自己用 <c>MaxWidth</c> 限宽，
     /// 由它自己的 <c>HorizontalAlignment=Center</c> 居中，容器侧要放开拉伸。
     /// </summary>
-    HorizontalAlignment HorizontalContent = HorizontalAlignment.Left) : Element;
+    HorizontalAlignment HorizontalContent = HorizontalAlignment.Left,
+    /// <summary>
+    /// 能不能用捏合 / Ctrl+滚轮缩放（XAML 的 <c>ZoomMode</c>，官方默认 <c>Disabled</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <b>开 <c>Enabled</c> 之前先想清楚内容是什么</b>：缩放只作用在
+    /// <c>Content</c> 这一个子元素上，而缩放后的尺寸由它自己的测量决定——
+    /// 内容是"按可用宽度铺开"的面板时，放大只会让它溢出、缩小才会真的变小。
+    /// 官方 Gallery 里那一档演示的是缩放<b>图片</b>，不是缩放面板。
+    /// </remarks>
+    ZoomMode Zoom = ZoomMode.Disabled) : Element;

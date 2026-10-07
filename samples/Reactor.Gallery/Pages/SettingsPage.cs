@@ -32,7 +32,8 @@ public sealed class SettingsPage : Component
                     ComboBox(
                         new[] { "跟随系统", "浅色", "深色" },
                         Optional<int>.Of(settings.Theme),
-                        settings.SetTheme),
+                        settings.SetTheme)
+                        .AutomationName("主题"),
                     description: "立即生效，并写入本地设置（下次启动保持）",
                     headerIcon: FontIcon("\uE790")),
 

@@ -55,4 +55,36 @@
     <ProjectReference Include="..\..\Reactor.uwp\Reactor.uwp.csproj" />
     <PackageReference Include="Microsoft.UI.Xaml" Version="2.8.7" />
   </ItemGroup>
+
+  <!-- 原生桥 DLL：走<b>工程引用</b>的项目必须自己声明一次，否则它不会进 AppX。
+       库项目没有 RuntimeIdentifier，Content 输出落在 bin\x64\Debug\<tfm>\ 下，
+       而本 App 带 RID、实际运行目录是 bin\x64\Debug\<tfm>\win-x64\AppX\ ——
+       跨项目引用的 Content 不会跟着进 RID 子目录，于是
+       LibraryImport("Reactor.Uwp.Native.dll") 在运行时抛 DllNotFoundException，
+       虚拟化那条路静默退化成自绘回退。
+       UwpApp.csproj 里有同一段（那段注释更细）；Reactor.Template 不用写是因为
+       它走 NuGet 包，包里的 runtimes\win-$(Platform)\native\ + build targets 会送过去。
+       少了它最典型的症状是"虚拟化示例看起来也能跑，但 realized 容器数不对"——
+       不报错，只是那条路根本没走原生产物。 -->
+  <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)..\..\Reactor.Uwp.Native\prebuilt\$(Platform)\Reactor.Uwp.Native.dll')">
+    <Content Include="$(MSBuildThisFileDirectory)..\..\Reactor.Uwp.Native\prebuilt\$(Platform)\Reactor.Uwp.Native.dll">
+      <Link>Reactor.Uwp.Native.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Visible>false</Visible>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 示例源码<b>本身</b>也是画廊的一份展品：SampleCodePresenter 展示的那段代码，
+         读的就是这里嵌进包里的文件，而不是在别处另抄一份字符串。
+         这样"看到的代码"与"跑起来的代码"同源 —— 复制出去能编译，
+         改了这个文件码块跟着变，不会出现"注释里的样板是对的、跑的却是另一份"
+         那种腐化（手写样板最常见的归宿）。WinUI 3 Gallery 的 SampleCodePresenter
+         也是从源文件加载的，这一点特意保持一致。
+
+         这里<b>没有</b>排除默认的 Compile：同一个文件既是编译单元又是嵌入资源，
+         两边各取所需。 -->
+    <EmbeddedResource Include="Gallery\Samples\**\*.cs" />
+    <EmbeddedResource Include="Pages\**\*.cs" />
+  </ItemGroup>
 </Project>

@@ -41,6 +41,45 @@ public sealed record BitmapIconElement(string UriSource) : Element
     public double? Height { get; init; }
 }
 
+/// <summary>
+/// 位图图标（<c>ImageIcon</c>，WinUI 2）：一张图当图标，<b>保留原图颜色</b>。
+/// </summary>
+/// <remarks>
+/// <b>与 <see cref="BitmapIconElement"/> 的分工不是"两种写法"，是官方两个不同的类型。</b>
+/// <list type="bullet">
+///   <item><c>BitmapIcon</c>（UWP 原生）：按原图 1:1 画、<c>ShowAsMonochrome</c>
+///         打开时按前景色<b>着色</b>——适合"必须跟着主题变色的单色图标"。</item>
+///   <item><c>ImageIcon</c>（WinUI 2）：内部是一个 <c>Image</c>，<b>按尺寸缩放</b>、
+///         画原图颜色，不做单色化——适合"本来就是彩色的图"（应用图标、头像）。</item>
+/// </list>
+/// 落到收 <c>IconSource</c> 的槽位（<c>SwipeItem.Icon</c> /
+/// <c>TabViewItem.IconSource</c>）时翻成 <c>ImageIconSource</c>。
+/// <para>
+/// 这里<b>不暴露 <c>Width</c> / <c>Height</c></b>：尺寸交给宿主的布局与
+/// <c>.Width()</c> / <c>.Height()</c> 修饰器，别在图标类型上再开一套旋钮——
+/// 两套入口会让"图标多大"有两个答案。
+/// </para>
+/// </remarks>
+public sealed record ImageIconElement(string UriSource) : Element;
+
+/// <summary>
+/// 符号图标，对应 <c>Windows.UI.Xaml.Controls.SymbolIcon</c>。
+/// </summary>
+/// <remarks>
+/// <b>它和 <see cref="FontIconElement"/> 是同一件事的两种写法</b>：官方的
+/// <c>Symbol</c> 枚举本质上就是"Segoe MDL2 Assets 里那批常用码位"的具名清单，
+/// <c>SymbolIcon</c> 内部也是把它翻成码位再交给字体。区别只在写法——
+/// 用常见符号时 <c>SymbolIcon(Symbol.Copy)</c> 比
+/// <c>FontIcon("\uE8C8")</c> 好读，也省得记码位。
+/// <para>
+/// 落到收 <c>IconSource</c> 的槽位（<c>SwipeItem.Icon</c> /
+/// <c>TabViewItem.IconSource</c>）时会被翻成 WinUI 2 的
+/// <c>SymbolIconSource</c>——与 <c>FontIconElement</c> → <c>FontIconSource</c>
+/// 同一条路。
+/// </para>
+/// </remarks>
+public sealed record SymbolIconElement(Symbol Symbol) : Element;
+
 // ════════════════════════════════════════════════════════════════════
 //  面包屑导航
 // ════════════════════════════════════════════════════════════════════

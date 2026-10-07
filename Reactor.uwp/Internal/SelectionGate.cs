@@ -207,6 +207,68 @@ internal static class SelectionGate
         verdict == SelectionVerdict.CancelTransient;
 
     /// <summary>
+    /// 未就绪期间被吞掉的这一发，<b>值要不要记下来、等就绪后补发</b>。
+    /// </summary>
+    /// <param name="value">这一发里控件的当前下标。</param>
+    /// <param name="controlledTarget">最近一次受控下发的目标；<c>null</c> 表示还没下发过。</param>
+    /// <remarks>
+    /// <b>2026-10 的 Heisenbug：这一条不设，就只能在开着日志的时候正常工作。</b>
+    /// 真机 A/B 实测：同一份代码，唯一变量是日志开关。
+    /// 开日志时 11 次点击全部落盘；关日志后一次都没落盘。
+    /// 原因是落盘本身在改时序：<c>ReactorLog.Persist</c> 每记一条 Info 都要
+    /// <c>new FileStream(Append)</c> 同步写一次文件，而且是<b>在 UI 线程上</b>。
+    /// 这段毫秒级的等待把"控件已可见但还没 Loaded"的窗口拖过去，
+    /// 用户点下去时窗口多半已经关了；日志一关，窗口比点击活得久，第一发就没了。
+    /// <para>
+    /// <b>判据只有一条：这个值是不是受控目标本身。</b>
+    /// 等于受控目标 ⇒ 作者是我们自己的下发或 WinUI 的内部自愈，本来就该吞；
+    /// 不等于 ⇒ 用户<b>已经看得见这个控件并且点到了它</b>，
+    /// 那是真实意图，不能因为我们的标记还没置上就把它扔掉。
+    /// </para>
+    /// <para>
+    /// <c>value &lt; 0</c>（取消选中）照旧不记：它没有"用户选中了哪一项"这层意思，
+    /// 补发它等于凭空回调一个 -1 出去。
+    /// </para>
+    /// </remarks>
+    public static bool ShouldDeferNotReady(int value, int? controlledTarget)
+    {
+        if (value < 0)
+        {
+            return false;
+        }
+
+        return controlledTarget is not int target || value != target;
+    }
+
+    /// <summary>
+    /// 补发兑现前的复查：此刻还该不该把记下的那一发交给用户回调。
+    /// </summary>
+    /// <param name="pending">未就绪期间记下的值。</param>
+    /// <param name="currentIndex">就绪这一刻控件的真实下标。</param>
+    /// <param name="controlledTarget">此刻的受控目标。</param>
+    /// <remarks>
+    /// <b>与 <c>SelectionRestore</c> 的复查同律：兑现前必须再问一次"还成立吗"。</b>
+    /// 记下到兑现之间隔着一次 <c>Loaded</c>，期间任何事都可能发生——
+    /// 用户改了主意、受控值被下发收敛到位、控件被清空。
+    /// 少了这道复查，补发就从"捡回丢失的点击"变成"制造一次凭空的点击"。
+    /// <list type="bullet">
+    ///   <item><c>currentIndex != pending</c>：用户又点了别的值，用最新那次，旧的作废；</item>
+    ///   <item><c>currentIndex &lt; 0</c>：控件现在什么都没选中，没有可补的发；</item>
+    ///   <item><c>pending == controlledTarget</c>：期间受控下发已经把它收敛到位了，
+    ///         再补发一次只会多调一次同值的 setState。</item>
+    /// </list>
+    /// </remarks>
+    public static bool ShouldFlushDeferred(int pending, int currentIndex, int? controlledTarget)
+    {
+        if (currentIndex < 0 || currentIndex != pending)
+        {
+            return false;
+        }
+
+        return controlledTarget is not int target || pending != target;
+    }
+
+    /// <summary>
     /// 把判定结果翻成人能读的原因，供日志用。
     /// </summary>
     /// <remarks>

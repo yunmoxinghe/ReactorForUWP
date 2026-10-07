@@ -1002,6 +1002,13 @@ internal sealed class Reconciler
             return;
         }
 
+        // 挂在它身上的浮出层：内容是一棵子树，但<b>不在</b>可视树里
+        // （不在 Content / Children 上），下面的递归走不进去 —— 必须在这里收。
+        ContentFlyouts.Retire(this, native.ContextFlyout);
+
+        // 提示气泡同形：挂在 ToolTipService.ToolTip 附加属性上，也不在可视树里。
+        ToolTips.Retire(this, native);
+
         FindHandler(element)?.Unmount(this, native);
     }
 
@@ -1114,7 +1121,7 @@ internal sealed class Reconciler
 
     // ── 修饰符 ──────────────────────────────────────────────────
 
-    private static void ApplyModifiers(UIElement native, ElementModifiers? modifiers)
+    private void ApplyModifiers(UIElement native, ElementModifiers? modifiers)
     {
         if (modifiers is null || native is not FrameworkElement framework)
         {
@@ -1147,10 +1154,9 @@ internal sealed class Reconciler
             WriteIfChanged(() => framework.Visibility, visibility, value => framework.Visibility = value);
         }
 
-        WriteRefIfChanged<object>(
-            () => ToolTipService.GetToolTip(native),
-            modifiers.ToolTip,
-            value => ToolTipService.SetToolTip(native, value));
+        // 提示气泡有两条路：字符串直接写附加属性；内容型要建一棵<b>不在可视树里</b>
+        // 的子树，交给 ToolTips 走协调器管（Build / Patch / 卸载，见那里的类注释）。
+        ToolTips.Apply(this, native, modifiers);
         WriteRefIfChanged(
             () => AutomationProperties.GetAutomationId(native),
             modifiers.AutomationId,
@@ -1221,7 +1227,7 @@ internal sealed class Reconciler
         // 键盘可达性 / 无障碍 / 投影 / 控件级声音（TabIndex、KeyboardAccelerators、
         // KeyDown、ContextFlyout、AccessKey、AutomationProperties.*、Shadow、
         // 附加属性 ElementSoundMode）。单独一个类：它有需要 diff 的事件与集合状态。
-        InputApplier.Apply(native, modifiers);
+        InputApplier.Apply(this, native, modifiers);
 
         // 本地化放最后：XAML 编译器生成的 x:Uid 赋值也在初始化末尾，
         // 所以 resw 里的值会覆盖代码里写的同属性值——顺序得跟它一致。
@@ -1405,6 +1411,41 @@ internal sealed class Reconciler
         if (modifiers.MaxLines is { } maxLines && native is TextBlock limited)
         {
             WriteIfChanged(() => limited.MaxLines, maxLines, value => limited.MaxLines = value);
+        }
+
+        // 截断只写在 TextBlock 上：这三个属性都长在 TextBlock / Control 而不是
+        // UIElement，给别的控件写会静默无效——这里一律按类型分派，不写就什么都不做。
+        if (modifiers.TextTrimming is { } trimming && native is TextBlock trimmed)
+        {
+            WriteIfChanged(
+                () => trimmed.TextTrimming, trimming, value => trimmed.TextTrimming = value);
+        }
+
+        if (modifiers.IsColorFontEnabled is { } colorFont && native is TextBlock colored)
+        {
+            WriteIfChanged(
+                () => colored.IsColorFontEnabled,
+                colorFont,
+                value => colored.IsColorFontEnabled = value);
+        }
+
+        if (modifiers.CharacterSpacing is { } spacing)
+        {
+            switch (native)
+            {
+                case TextBlock textBlock:
+                    WriteIfChanged(
+                        () => textBlock.CharacterSpacing,
+                        spacing,
+                        value => textBlock.CharacterSpacing = value);
+                    break;
+                case Control control:
+                    WriteIfChanged(
+                        () => control.CharacterSpacing,
+                        spacing,
+                        value => control.CharacterSpacing = value);
+                    break;
+            }
         }
     }
 

@@ -40,6 +40,25 @@ if (-not (Test-Path $exe)) {
     throw "找不到 $exe`n先在 VS 里生成一次（Ctrl+Shift+B），或用 dotnet build 出 exe。"
 }
 
+# ---- 0. VS 生成的 AppX 布局优先 ----
+#
+# 注册必须挑**完整**的那份布局。VS 的 MSIX 那一步会在 win-<arch>/AppX 下产出
+# 一份能直接部署的布局：带 resources.pri、带 Microsoft.UI.Xaml.winmd、
+# 清单里 ProcessorArchitecture / 依赖都已就位。
+# 而 CLI 的 dotnet build 只把 exe / dll 吐在 win-<arch> 根上，pri 与 winmd 都没有。
+# 早先这里一律用根目录现造清单去注册，结果是：注册成功（Status=Ok）、激活也
+# 报"完成"，但应用<b>根本不出现</b>——既不崩也不留日志，因为进程压根没起来。
+# 现在有 AppX 就用 AppX，没有再退回下面那条自己补清单的老路。
+$vsLayout = Join-Path $layout "AppX"
+$vsManifest = Join-Path $vsLayout "AppxManifest.xml"
+
+if (Test-Path $vsManifest) {
+    Write-Host "==> 用 VS 生成的布局：$vsLayout"
+    $layout   = $vsLayout
+    $manifest = $vsManifest
+    $exe      = Join-Path $layout "Reactor.$Project.exe"
+}
+
 # ---- 1. 清单：没有就自己生成一份 ----
 #
 # 源 Package.appxmanifest 是给 VS 的，直接拿去注册不够：
@@ -50,6 +69,7 @@ if (-not (Test-Path $exe)) {
 #   - 缺两条框架依赖（WinUI 2 / VCLibs），那是 VS 的 WinUI targets 注入的
 if (-not (Test-Path $manifest)) {
     if (-not (Test-Path $srcManifest)) { throw "找不到源清单 $srcManifest" }
+    # （走到这里说明没有 AppX 布局，只有 CLI 产物，按下面那串补丁自己补一份。）
     Write-Host "==> 生成清单（VS 的 MSIX 布局不在，从源清单补一份）"
 
     [xml]$x = Get-Content $srcManifest
@@ -72,6 +92,16 @@ if (-not (Test-Path $manifest)) {
             foreach ($a in @($node.Attributes)) {
                 if ($a.Value -match '^ms-resource:(.+)$' -and $strings.ContainsKey($Matches[1])) {
                     $a.Value = $strings[$Matches[1]]
+                }
+            }
+
+            # 元素<b>文本</b>里的 ms-resource（<DisplayName>ms-resource:AppDisplayName</DisplayName>
+            # 就是这种）。只替换属性会漏掉它，而它恰恰是包级别的显示名——
+            # 留着不解析，注册时会报"windows.firewall 扩展找不到 NamedResource"
+            # （防火墙规则用包显示名）。
+            if ($node.ChildNodes.Count -eq 1 -and $node.FirstChild.NodeType -eq 'Text') {
+                if ($node.InnerText -match '^ms-resource:(.+)$' -and $strings.ContainsKey($Matches[1])) {
+                    $node.InnerText = $strings[$Matches[1]]
                 }
             }
         }

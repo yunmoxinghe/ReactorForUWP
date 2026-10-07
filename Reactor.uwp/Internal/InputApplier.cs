@@ -51,12 +51,16 @@ internal static class InputApplier
     /// <summary>"已经请求过焦点"的控件——<c>FocusOnMount</c> 只做一次。</summary>
     private static readonly WeakTable<UIElement, bool> FocusRequested = new();
 
+    /// <summary>每个控件<b>上次处理过的焦点令牌</b>——<c>FocusToken</c> 靠它判边沿。</summary>
+    private static readonly WeakTable<UIElement, int> FocusTokens = new();
+
     private static readonly HashSet<string> UnsupportedInputTypes = new(StringComparer.Ordinal);
 
-    public static void Apply(UIElement native, ElementModifiers mods)
+    public static void Apply(Reconciler reconciler, UIElement native, ElementModifiers mods)
     {
         ApplyTabOrder(native, mods);
-        ApplyContextFlyout(native, mods);
+        ApplyContextFlyout(reconciler, native, mods);
+        ApplySelectionFlyout(reconciler, native, mods);
         ApplyKeyboardAccelerators(native, mods);
         ApplyKeyEvents(native, mods);
         ApplyFocus(native, mods);
@@ -104,8 +108,76 @@ internal static class InputApplier
 
     // ── 右键浮出层 ──────────────────────────────────────────────
 
-    private static void ApplyContextFlyout(UIElement native, ElementModifiers mods) =>
+    /// <summary>
+    /// 右键浮出层。两种来源：<see cref="ElementModifiers.ContextMenu"/>（声明式，
+    /// 优先）与 <see cref="ElementModifiers.ContextFlyout"/>（已造好的原生实例）。
+    /// </summary>
+    /// <remarks>
+    /// 声明式那份<b>是不是</b>每次重渲染都重新物化，要看它是哪一种：
+    /// <c>MenuFlyout</c>（装"项"）是重建——它不在可视树里，逐项 patch + 逐项
+    /// 解绑旧回调要为每个菜单项维护一张"元素 ↔ 原生"的表，为一段转瞬即逝的
+    /// 浮出层做这套记账不划算（详见 <see cref="MenuFlyouts"/> 的注释）。
+    /// 代价是重渲染时如果菜单正开着，下一次弹出会用到新的那份——已经弹出的
+    /// 那一份不受影响。
+    /// <para>
+    /// <see cref="FlyoutElement"/>（装一棵<b>子树</b>）是例外：它<b>就地 patch</b>，
+    /// 由 <see cref="ContentFlyouts"/> 走协调器管——因为它的内容里可以有正在
+    /// 输入的 <c>TextBox</c>，重建会把那点状态每轮抹掉一次。
+    /// </para>
+    /// </remarks>
+    private static void ApplyContextFlyout(
+        Reconciler reconciler, UIElement native, ElementModifiers mods)
+    {
+        if (mods.ContextMenu is { } menu)
+        {
+            native.ContextFlyout = FlyoutSlot.Of(reconciler, null, menu, native.ContextFlyout);
+            return;
+        }
+
         WriteRef(() => native.ContextFlyout, mods.ContextFlyout, v => native.ContextFlyout = v);
+    }
+
+    /// <summary>
+    /// 选中文本时弹出的浮出层（<c>SelectionFlyout</c>）。
+    /// </summary>
+    /// <remarks>
+    /// <b>这个属性不在 <c>UIElement</c> 上</b>：官方只给"能选文本的控件"留了它，
+    /// 于是这里按类型分派，落到各自那份<b>同名</b>属性上（与
+    /// <c>ElementSoundMode</c> 那一处是同一种形状：不是附加属性，
+    /// 是几个类型各声明了一份）。认不出的类型留痕忽略——
+    /// 静默改成"什么都没有"会让"菜单怎么点都不弹"变成没有痕迹的问题。
+    /// </remarks>
+    private static void ApplySelectionFlyout(
+        Reconciler reconciler, UIElement native, ElementModifiers mods)
+    {
+        if (mods.SelectionFlyout is not { } flyout)
+        {
+            return;
+        }
+
+        switch (native)
+        {
+            case TextBox box:
+                box.SelectionFlyout = FlyoutSlot.Of(reconciler, null, flyout, box.SelectionFlyout);
+                break;
+
+            case RichEditBox rich:
+                rich.SelectionFlyout = FlyoutSlot.Of(reconciler, null, flyout, rich.SelectionFlyout);
+                break;
+
+            case TextBlock text:
+                text.SelectionFlyout = FlyoutSlot.Of(reconciler, null, flyout, text.SelectionFlyout);
+                break;
+
+            case RichTextBlock richText:
+                richText.SelectionFlyout = FlyoutSlot.Of(reconciler, null, flyout, richText.SelectionFlyout);
+                break;
+
+            default:
+                WarnOnce(native, "SelectionFlyout");
+                break;
+        }
+    }
 
     // ── 键盘快捷键 ──────────────────────────────────────────────
 
@@ -188,12 +260,19 @@ internal static class InputApplier
 
     private static void Rebind(AccelEntry entry, KeyboardAcceleratorSpec spec)
     {
-        entry.Spec = spec;
-
-        if (ReferenceEquals(spec.OnInvoked, entry.Spec.OnInvoked) && entry.Handler is not null)
+        // 比较要在赋值之前做。
+        //
+        // 反例（曾经就是）：先写 `entry.Spec = spec` 再比较——两边成了同一个对象，
+        // 比较恒真，于是只要 handler 挂上过一次就永远提前返回，回调再也跟不上新闭包。
+        // 症状是"第一次按快捷键有效，之后按同一个键没反应"：闭包捕获的是挂载那一帧的值
+        // （比如 FocusToken 的自增基数停在 0），后续每按一次都算出同一个结果，state 不动。
+        // 守住它的那道契约见 tests 的 CallbackRebindComparesBeforeAssign。
+        if (entry.Handler is not null && ReferenceEquals(spec.OnInvoked, entry.Spec.OnInvoked))
         {
             return;
         }
+
+        entry.Spec = spec;
 
         if (entry.Handler is { } old)
         {
@@ -263,28 +342,41 @@ internal static class InputApplier
 
     private static void ApplyFocus(UIElement native, ElementModifiers mods)
     {
-        if (mods.FocusOnMount is not true || FocusRequested.ContainsKey(native))
-        {
-            return;
-        }
+        var wantMountFocus = mods.FocusOnMount is true && !FocusRequested.ContainsKey(native);
+
+        // 令牌那条是"边沿触发"：与上次处理过的值不同才算一次请求，
+        // 相同就当没这回事（用户点走了焦点不该在下次重渲染时被抢回来）。
+        var tokenChanged = mods.FocusToken is { } token &&
+            (!FocusTokens.TryGetValue(native, out var last) || last != token);
 
         // Focus 是 Control 的方法（UIElement 没有）：TextBlock 之类声明了就只能忽略。
         if (native is not Control control)
         {
-            WarnOnce(native, "FocusOnMount");
+            if (wantMountFocus || tokenChanged)
+            {
+                WarnOnce(native, wantMountFocus ? "FocusOnMount" : "FocusToken");
+            }
+
             return;
         }
 
-        FocusRequested.Set(native, true);
-
-        if (native is FrameworkElement { IsLoaded: true })
+        if (!wantMountFocus && !tokenChanged)
         {
-            control.Focus(FocusState.Programmatic);
             return;
+        }
+
+        if (wantMountFocus)
+        {
+            FocusRequested.Set(native, true);
+        }
+
+        if (mods.FocusToken is { } value)
+        {
+            FocusTokens.Set(native, value);
         }
 
         // 挂载阶段控件还没进树，此时 Focus 必然失败 → 等 Loaded。
-        if (native is not FrameworkElement framework)
+        if (native is not FrameworkElement framework || framework.IsLoaded)
         {
             control.Focus(FocusState.Programmatic);
             return;

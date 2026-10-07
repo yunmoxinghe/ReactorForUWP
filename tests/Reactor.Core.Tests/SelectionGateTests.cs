@@ -34,9 +34,54 @@ internal static class SelectionGateTests
     public static void Run()
     {
         GateTruthTable();
+        DeferredNotReadyTruthTable();
         Invariants();
         TwoPartGesture();
+        ClickBeforeLoaded();
         Fuzz();
+    }
+
+    // ── 1b. 补发判据穷举 ────────────────────────────────────────────
+    /// <summary>
+    /// 未就绪补发的两道判据：<b>该不该记</b>与<b>该不该兑现</b>。
+    /// </summary>
+    private static void DeferredNotReadyTruthTable()
+    {
+        Program.Section("SelectionGate / 未就绪补发判据穷举");
+
+        // ── 该不该记（ShouldDeferNotReady）──
+        Program.Check(
+            "未就绪 + 值等于受控目标 → 不记（那是我们自己下发的中间态）",
+            !SelectionGate.ShouldDeferNotReady(0, 0));
+
+        Program.Check(
+            "未就绪 + 值不等于受控目标 → 记（用户看得见且点到了）",
+            SelectionGate.ShouldDeferNotReady(2, 0));
+
+        Program.Check(
+            "未就绪 + 取消选中（-1）→ 不记（补发 -1 等于凭空回调）",
+            !SelectionGate.ShouldDeferNotReady(-1, 0));
+
+        Program.Check(
+            "还没下发过（target=null）+ 非负值 → 记",
+            SelectionGate.ShouldDeferNotReady(1, null));
+
+        // ── 该不该兑现（ShouldFlushDeferred）──
+        Program.Check(
+            "兑现时控件还停在记下的值、且仍不等于受控目标 → 兑现",
+            SelectionGate.ShouldFlushDeferred(2, 2, 0));
+
+        Program.Check(
+            "兑现时用户已改主意（控件值变了）→ 作废",
+            !SelectionGate.ShouldFlushDeferred(2, 3, 0));
+
+        Program.Check(
+            "兑现时控件被清空（-1）→ 作废",
+            !SelectionGate.ShouldFlushDeferred(2, -1, 0));
+
+        Program.Check(
+            "兑现前受控下发已把它收敛到位（pending == target）→ 作废，别多调一次",
+            !SelectionGate.ShouldFlushDeferred(2, 2, 2));
     }
 
     // ── 1. 判据穷举 ────────────────────────────────────────────────
@@ -205,6 +250,73 @@ internal static class SelectionGateTests
             "反向对照（只留作废）：仍然挡住覆盖",
             !BrokenWroteBack(cancelOnly),
             $"trace={Trace(cancelOnly)}");
+    }
+
+    // ── 1c. INV12：进树之前的那一次点击不得丢失 ─────────────────────
+    /// <summary>
+    /// INV12：<b>控件已可点、但框架还没标记为就绪</b>时，用户的那一发必须被记下，
+    /// 并在 <c>Loaded</c> 时补发。
+    /// </summary>
+    /// <remarks>
+    /// 这是 <b>2026-10 Heisenbug</b> 的回归件。真机 A/B 实测（同一份代码，
+    /// 唯一变量是日志开关）：开日志时 11 次点击全部落盘，关日志一次都没落盘。
+    /// 根因不在判据错，而在"未就绪就静默丢弃"这条策略本身——
+    /// 而落盘（<c>ReactorLog.Persist</c> 每记一条都同步开合一次文件，且在 UI 线程上）
+    /// 恰好把那个窗口拖过去，于是<b>开着日志一切正常</b>。
+    /// 这类 bug 靠真机点击定位不了：仪器一装上，现象就消失。
+    /// <para>
+    /// 场景取自折叠的 <c>SettingsExpander</c>：受控下发发生在挂载时（控件还没进树），
+    /// 用户展开后<b>立刻</b>点——此时 <c>Loaded</c> 可能还没到。
+    /// </para>
+    /// </remarks>
+    private static void ClickBeforeLoaded()
+    {
+        Program.Section("INV12 / 进树之前的点击：不得被静默丢掉");
+
+        ControlledSelectionSim Build(bool defer)
+        {
+            var sim = new ControlledSelectionSim { DeferNotReadyClick = defer };
+
+            // 挂载：受控值下发时控件还没进树（折叠区的形状）。
+            sim.Mount(0);
+            // 内部 repeater 先进树：此刻起 WinUI 能接受选中、也会抛事件，
+            // 但框架的就绪标记还没置上（真机上这两件事之间有真实的时间差）。
+            sim.BeginRepeaterLoad();
+            // 用户在这个窗口里点了第 2 项。
+            sim.Click(2);
+            // 控件自身的 Loaded 派发到框架。
+            sim.CompleteLoad();
+            sim.Drain();
+            return sim;
+        }
+
+        string Trace(ControlledSelectionSim sim) => string.Join(" | ", sim.Trace);
+
+        var ok = Build(defer: true);
+        Program.Check(
+            "用户选的值进了 state",
+            ok.State == 2,
+            $"state={ok.State} trace={Trace(ok)}");
+        Program.Check(
+            "控件停在用户选的值上",
+            ok.ControlIndex == 2,
+            $"控件={ok.ControlIndex} trace={Trace(ok)}");
+        Program.Check(
+            "恰好一次回调，且回调值就是用户点的那个",
+            ok.CallbackCount == 1 && ok.CallbackValues.Contains(2),
+            $"回调 {ok.CallbackCount} 次，值=[{string.Join(",", ok.CallbackValues)}] trace={Trace(ok)}");
+
+        // 反向对照：关掉补发，这一次点击必须彻底消失——否则这条用例没摸到病。
+        // 这一条是全部工作的凭据：它红了才说明"未就绪就丢弃"真的会丢点击。
+        var broken = Build(defer: false);
+        Program.Check(
+            "反向对照（关掉补发）：这一次点击彻底丢失（无回调、state 停在旧值）",
+            broken.CallbackCount == 0 && broken.State == 0,
+            $"回调 {broken.CallbackCount} 次，state={broken.State} trace={Trace(broken)}");
+        Program.Check(
+            "反向对照：控件被受控重放拉回旧值（正是用户看到的「点了没反应」）",
+            broken.ControlIndex == 0,
+            $"控件={broken.ControlIndex} trace={Trace(broken)}");
     }
 
     // ── 2. 闭环不变量 ──────────────────────────────────────────────

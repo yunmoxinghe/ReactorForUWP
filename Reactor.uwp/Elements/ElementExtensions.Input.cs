@@ -47,6 +47,18 @@ public static partial class ElementExtensions
     public static T FocusOnMount<T>(this T el, bool enabled = true) where T : Element =>
         Set(el, m => m with { FocusOnMount = enabled });
 
+    /// <summary>
+    /// 焦点令牌：<b>值变了就请求一次焦点</b>。想"再聚焦一次"就换一个值（通常是 +1）。
+    /// </summary>
+    /// <remarks>
+    /// 对应的是代码后置里那句 <c>control.Focus(FocusState.Programmatic)</c>，
+    /// 没有 XAML 属性可搬（<c>Focus</c> 是方法）。典型用法是 Ctrl+F 聚焦搜索框：
+    /// 快捷键回调里把 state 里的令牌 +1，下一次渲染就把焦点送过去，
+    /// 而后续每一帧因为令牌没变都不会再抢。
+    /// </remarks>
+    public static T FocusToken<T>(this T el, int token) where T : Element =>
+        Set(el, m => m with { FocusToken = token });
+
     /// <summary>访问键（<c>AccessKey</c>，Alt+字符）。</summary>
     public static T AccessKey<T>(this T el, string key) where T : Element =>
         Set(el, m => m with { AccessKey = key });
@@ -96,6 +108,41 @@ public static partial class ElementExtensions
     /// </remarks>
     public static T ContextFlyout<T>(this T el, FlyoutBase flyout) where T : Element =>
         Set(el, m => m with { ContextFlyout = flyout });
+
+    /// <summary>
+    /// 右键 / 长按弹出的浮出层，<b>声明式</b>写法（对应 XAML 里
+    /// <c>&lt;UIElement.ContextFlyout&gt;&lt;MenuFlyout&gt;…&lt;/MenuFlyout&gt;</c>）。
+    /// </summary>
+    /// <param name="el">宿主元素。</param>
+    /// <param name="flyout">
+    /// 浮出层描述：<see cref="MenuFlyoutElement"/>（菜单）或
+    /// <see cref="CommandBarFlyoutElement"/>（命令条浮层）。
+    /// </param>
+    /// <remarks>
+    /// 与 <see cref="ContextFlyout"/> 的区别是"浮出层从哪儿来"：后者收一个已经造好的
+    /// 原生实例，这里收一份元素描述、由框架物化——于是内容也能跟着 state 走，
+    /// 不必自己管实例的生命周期。收哪几种由 <c>FlyoutSlot</c> 决定，
+    /// 给了不认识的会留痕并保持原值（不会静默变成"没有右键菜单"）。
+    /// </remarks>
+    public static T ContextMenu<T>(this T el, Element flyout) where T : Element =>
+        Set(el, m => m with { ContextMenu = flyout });
+
+    /// <summary>
+    /// 选中文本时弹出的浮出层，<b>声明式</b>写法（对应 XAML 里
+    /// <c>&lt;TextBox.SelectionFlyout&gt;&lt;TextCommandBarFlyout/&gt;</c>）。
+    /// </summary>
+    /// <param name="el">宿主元素。</param>
+    /// <param name="flyout">
+    /// 浮出层描述，一般给 <see cref="TextCommandBarFlyoutElement"/>
+    /// （其余几种也能挂，收哪几种由 <c>FlyoutSlot</c> 决定）。
+    /// </param>
+    /// <remarks>
+    /// <b>只有文本控件认这个槽位</b>：<c>SelectionFlyout</c> 是官方给"能选文本的
+    /// 控件"单独留的属性，不在 <c>UIElement</c> 上——给别的控件写会留一条痕并忽略
+    /// （与 <c>TabIndex</c> 在非 <c>Control</c> 上的处理同一条规矩）。
+    /// </remarks>
+    public static T SelectionFlyout<T>(this T el, Element flyout) where T : Element =>
+        Set(el, m => m with { SelectionFlyout = flyout });
 
     // ── AutomationProperties ────────────────────────────────────
 

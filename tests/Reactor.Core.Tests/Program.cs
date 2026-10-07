@@ -42,6 +42,7 @@ internal static class Program
         SiblingWriteTests.Run();
         RebuildEchoTests.Run();
         EchoContractTests.Run();
+        GalleryIndexTests.Run();
 
         Console.WriteLine();
         Console.WriteLine(new string('-', 60));

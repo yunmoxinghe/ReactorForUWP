@@ -101,6 +101,21 @@ public static partial class ElementExtensions
     public static T TextAlignment<T>(this T el, Windows.UI.Xaml.TextAlignment alignment) where T : Element =>
         Set(el, m => m with { TextAlignment = alignment });
 
+    /// <summary>超出容器时怎么截断（<c>TextTrimming</c>）。</summary>
+    public static T TextTrimming<T>(this T el, Windows.UI.Xaml.TextTrimming trimming)
+        where T : Element =>
+        Set(el, m => m with { TextTrimming = trimming });
+
+    /// <summary>
+    /// 彩色字形（emoji 那类）按彩色画还是单色画（<c>IsColorFontEnabled</c>）。
+    /// </summary>
+    public static T ColorFont<T>(this T el, bool enabled = true) where T : Element =>
+        Set(el, m => m with { IsColorFontEnabled = enabled });
+
+    /// <summary>字距（<c>CharacterSpacing</c>），单位 1/1000 em。</summary>
+    public static T CharacterSpacing<T>(this T el, int spacing) where T : Element =>
+        Set(el, m => m with { CharacterSpacing = spacing });
+
     /// <summary>最大行数（超出按 <c>TextTrimming</c> 截断）。</summary>
     public static T MaxLines<T>(this T el, int maxLines) where T : Element =>
         Set(el, m => m with { MaxLines = maxLines });

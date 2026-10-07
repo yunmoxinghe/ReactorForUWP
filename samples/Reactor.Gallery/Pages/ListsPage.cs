@@ -56,7 +56,8 @@ public sealed class ListsPage : Component
             .Select(f => new NavigationViewItemData(f))
             .ToArray();
 
-        // ForEach 返回 GroupElement（渲染成裸 Grid），可以直接塞进 VStack。
+        // ForEach 传进 VStack 后会被摊平成 6 个子项（不是"一个装着 6 个 Border 的
+        // Grid"——那种写法里 6 个 Border 会全叠在 Grid 的 (0,0) 上）。见 Factories.Group 的说明。
         var chips = ForEach(Fruits, (fruit, i) =>
             Border(TextBlock($"{i + 1}. {fruit}")).Padding(6, 2, 6, 2));
 

@@ -48,6 +48,22 @@ public static partial class Factories
     public static BitmapIconElement BitmapIcon(string uriSource, bool showAsMonochrome = true) =>
         new(uriSource) { ShowAsMonochrome = showAsMonochrome };
 
+    /// <summary>
+    /// 位图图标（WinUI 2 的 <c>ImageIcon</c>）：一张彩色图当图标，<b>会按尺寸缩放</b>。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="BitmapIcon"/> 之别见 <see cref="ImageIconElement"/>：
+    /// 那个是单色化 + 1:1 画，这个是原色 + 缩放。
+    /// </remarks>
+    public static ImageIconElement ImageIcon(string uriSource) => new(uriSource);
+
+    /// <summary>
+    /// 符号图标：<paramref name="symbol"/> 用官方 <c>Symbol</c> 枚举里那批常用符号
+    /// （<c>Symbol.Copy</c> / <c>Symbol.Delete</c> …），不必记 Segoe MDL2 码位。
+    /// </summary>
+    /// <remarks>与 <see cref="FontIcon"/> 的关系见 <see cref="SymbolIconElement"/>。</remarks>
+    public static SymbolIconElement SymbolIcon(Symbol symbol) => new(symbol);
+
     // ── 面包屑 ────────────────────────────────────────────────
 
     /// <summary>WinUI 2 的 BreadcrumbBar：字符串路径。</summary>
@@ -167,6 +183,9 @@ public static partial class Factories
         string? secondaryButtonText = null,
         string? closeButtonText = null,
         ContentDialogButton defaultButton = ContentDialogButton.Primary,
+        bool fullSizeDesired = false,
+        bool isPrimaryButtonEnabled = true,
+        bool isSecondaryButtonEnabled = true,
         double? messageFontSize = null,
         Action<ContentDialogResult>? onResult = null) =>
         new(title, content, message)
@@ -175,6 +194,9 @@ public static partial class Factories
             SecondaryButtonText = secondaryButtonText,
             CloseButtonText = closeButtonText,
             DefaultButton = defaultButton,
+            FullSizeDesired = fullSizeDesired,
+            IsPrimaryButtonEnabled = isPrimaryButtonEnabled,
+            IsSecondaryButtonEnabled = isSecondaryButtonEnabled,
             MessageFontSize = messageFontSize,
             OnResult = onResult,
         };
@@ -213,7 +235,12 @@ public static partial class Factories
         bool isBackButtonVisible = false,
         bool isBackEnabled = false,
         bool isSettingsVisible = true,
-        string? header = null) =>
+        string? header = null,
+        Element? searchBox = null,
+        bool isPaneToggleButtonVisible = true,
+        string? paneTitle = null,
+        double? compactModeThresholdWidth = null,
+        double? expandedModeThresholdWidth = null) =>
         new(content, menuItems)
         {
             PaneDisplayMode = paneDisplayMode,
@@ -225,5 +252,10 @@ public static partial class Factories
             IsBackEnabled = isBackEnabled,
             IsSettingsVisible = isSettingsVisible,
             Header = header,
+            SearchBox = searchBox,
+            IsPaneToggleButtonVisible = isPaneToggleButtonVisible,
+            PaneTitle = paneTitle,
+            CompactModeThresholdWidth = compactModeThresholdWidth,
+            ExpandedModeThresholdWidth = expandedModeThresholdWidth,
         };
 }

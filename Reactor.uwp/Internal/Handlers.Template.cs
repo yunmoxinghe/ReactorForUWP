@@ -198,6 +198,46 @@ internal sealed class BitmapIconHandler : ElementHandler<BitmapIconElement, Bitm
 }
 
 /// <summary>
+/// 位图图标（WinUI 2 的 <c>ImageIcon</c>）：内部是一个 <c>Image</c>，
+/// <b>按宿主给的尺寸缩放、画原图颜色</b>——与 <c>BitmapIcon</c> 那个"1:1 画 +
+/// 单色化"是官方两个不同的控件，别互相顶替。
+/// </summary>
+internal sealed class ImageIconHandler : ElementHandler<ImageIconElement, MuxControls.ImageIcon>
+{
+    protected override MuxControls.ImageIcon Mount(Reconciler reconciler, ImageIconElement element)
+    {
+        var icon = new MuxControls.ImageIcon();
+        ApplySource(icon, element);
+        return icon;
+    }
+
+    protected override void Update(
+        Reconciler reconciler,
+        ImageIconElement oldElement,
+        ImageIconElement newElement,
+        MuxControls.ImageIcon control)
+    {
+        // 地址没变就不动：换一次 Source 会让内部那个 Image 重新解码，
+        // 每轮重渲染都换一遍等于每轮解一次图。
+        if (!string.Equals(oldElement.UriSource, newElement.UriSource, StringComparison.Ordinal))
+        {
+            ApplySource(control, newElement);
+        }
+    }
+
+    private static void ApplySource(MuxControls.ImageIcon icon, ImageIconElement element)
+    {
+        // 与 Image / BitmapIcon 同一条路：ms-appx: 绝对前缀 + 反斜杠规范化。
+        // 非法 URI 是<b>静默失败</b>（见 PackUri），这里保持 Source 为 null——
+        // 图标就是空的，不抛。
+        if (PackUri.TryCreate(element.UriSource) is { } uri)
+        {
+            icon.Source = new BitmapImage(uri);
+        }
+    }
+}
+
+/// <summary>
 /// 面包屑：映射 WinUI 2 原生 <c>BreadcrumbBar</c>——与参考模板 <c>MainPage.xaml</c>
 /// 里的 <c>&lt;controls:BreadcrumbBar&gt;</c> 是同一个控件。
 /// </summary>

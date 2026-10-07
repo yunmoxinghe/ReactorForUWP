@@ -92,6 +92,130 @@ internal static class EchoContractTests
         SuppressionCoversItsOwnControl();
         SilenceWindowsUseTheirOwnTable();
         GateVerdictIsEnforced();
+        CallbackRebindComparesBeforeAssign();
+    }
+
+    /// <summary>
+    /// 第二十四道：加速器回调的"要不要重挂"判据，必须在 <c>entry.Spec = spec</c>
+    /// <b>之前</b>求值。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>这一道守的是"第一次有效、之后无效"型的静默失效。</b>
+    /// <c>InputApplier.Rebind</c> 的任务是让 <c>KeyboardAccelerator</c> 的回调
+    /// 跟上每一帧新写的闭包（元素记录每帧重建，闭包捕获的是当帧的值）。
+    /// 它得先问"回调是不是同一个"、再决定要不要重挂；而<b>比较必须发生在落盘之前</b>——
+    /// 先 <c>entry.Spec = spec;</c> 再比较，两边就是同一个对象，
+    /// <c>ReferenceEquals</c> 恒真，于是只要 handler 挂上过一次就永远提前返回，
+    /// 回调再也不会更新。
+    /// </para>
+    /// <para>
+    /// 症状：Ctrl+F 第一次能把焦点送到搜索框，<b>第二次按同一个键毫无反应</b>
+    /// （闭包里的自增基数停在挂载那一帧的 0，每按一次都算出同一个值）。
+    /// 界面没有异常、UIA 树也没有异常——遍历看得见的是"控件在不在"，
+    /// 看不见"回调是不是旧的"；而控制台测试碰不到 <c>Windows.UI.Xaml</c>。
+    /// 在这个仓库里它是实测过的：修复前连按三次是 F1 / F1 / F1，修复后是 F1 / F2 / F3
+    /// （<c>samples/probe-ctrl-f.sh</c> 就是把这条链路真跑一遍的探针）。
+    /// </para>
+    /// <para>
+    /// 所以判据只能落在源码顺序上，并且先用合成样本证明这条判据抓得住反例——
+    /// 一条永远不会红的防线等于没有防线。
+    /// </para>
+    /// </remarks>
+    private static void CallbackRebindComparesBeforeAssign()
+    {
+        // 反例：先落盘、后比较（修复前就是这里）。
+        string[] bad =
+        {
+            "    private static void Rebind(AccelEntry entry, KeyboardAcceleratorSpec spec)",
+            "    {",
+            "        entry.Spec = spec;",
+            "",
+            "        if (entry.Handler is not null && ReferenceEquals(spec.OnInvoked, entry.Spec.OnInvoked))",
+            "        {",
+            "            return;",
+            "        }",
+            "    }",
+        };
+
+        // 正例：先比较、后落盘。
+        string[] good =
+        {
+            "    private static void Rebind(AccelEntry entry, KeyboardAcceleratorSpec spec)",
+            "    {",
+            "        if (entry.Handler is not null && ReferenceEquals(spec.OnInvoked, entry.Spec.OnInvoked))",
+            "        {",
+            "            return;",
+            "        }",
+            "",
+            "        entry.Spec = spec;",
+            "    }",
+        };
+
+        Program.Check("合成样本：先落盘后比较 → 必须报警", !RebindComparesBeforeAssign(bad));
+        Program.Check("合成样本：先比较后落盘 → 不报警", RebindComparesBeforeAssign(good));
+
+        var root = RepoRoot();
+        if (root is null)
+        {
+            Program.Check("找不到仓库根", false);
+            return;
+        }
+
+        var path = Path.Combine(root, "Reactor.uwp", "Internal", "InputApplier.cs");
+        if (!File.Exists(path))
+        {
+            Program.Check($"找不到 {Relative(path)}", false);
+            return;
+        }
+
+        Program.Check(
+            "真源码：加速器回调的更新判据在落盘之前",
+            RebindComparesBeforeAssign(StripComments(File.ReadAllLines(path)).ToArray()));
+    }
+
+    /// <summary>
+    /// <c>Rebind</c> 里「先比较回调、后落盘 spec」是否成立。
+    /// </summary>
+    /// <remarks>
+    /// 只看方法声明之后的一小段窗口：这个方法是"比较 → 解绑 → 重挂"十来行，
+    /// 窗口开太大就会吃进文件里别处（比如 <c>Interaction.Behaviors</c> 那类）的同名写法。
+    /// </remarks>
+    private static bool RebindComparesBeforeAssign(IReadOnlyList<string> lines)
+    {
+        var start = -1;
+        for (var i = 0; i < lines.Count; i++)
+        {
+            if (lines[i].Contains("private static void Rebind(AccelEntry entry"))
+            {
+                start = i;
+                break;
+            }
+        }
+
+        if (start < 0)
+        {
+            return false;
+        }
+
+        var compare = -1;
+        var assign = -1;
+        var end = Math.Min(lines.Count, start + 40);
+
+        for (var i = start; i < end; i++)
+        {
+            if (compare < 0 && lines[i].Contains("ReferenceEquals(spec.OnInvoked, entry.Spec.OnInvoked)"))
+            {
+                compare = i;
+            }
+
+            if (assign < 0 && lines[i].Contains("entry.Spec = spec;"))
+            {
+                assign = i;
+            }
+        }
+
+        return compare >= 0 && assign >= 0 && compare < assign;
     }
 
     /// <summary>
@@ -721,12 +845,30 @@ internal static class EchoContractTests
         // 出现在别的上下文里——只认 `\s*+=`（真订阅）或 Rebind*（订阅被收进的那个助手）。
         ("SelectedIndex", @"SelectionChanged\s*\+="),
         ("SelectedItem", @"SelectionChanged\s*\+="),
-        ("IsChecked", @"\bChecked\s*\+=|\bUnchecked\s*\+=|RebindCheckBox"),
+        // ToggleSplitButton 是 WinUI 2 的控件，不继承 UWP 的 ToggleButton：
+        // 它没有 Checked / Unchecked，回执只有一个 IsCheckedChanged。
+        // 菜单里那两种可勾选项更极端：ToggleMenuFlyoutItem / RadioMenuFlyoutItem
+        // 连 IsCheckedChanged 都没有（官方只给 Click），值只能从 Click 里回读——
+        // 所以 Click 也得算 IsChecked 的回执通道，否则这一族会整族掉出第四道视野。
+        ("IsChecked", @"\bChecked\s*\+=|\bUnchecked\s*\+=|RebindCheckBox|IsCheckedChanged\s*\+=|\bClick\s*\+="),
         ("IsOn", @"Toggled\s*\+="),
         ("Text", @"TextChanged\s*\+=|RebindTextChanged"),
         ("Password", @"PasswordChanged\s*\+="),
         ("Value", @"ValueChanged\s*\+=|RebindSlider"),
         ("IsExpanded", @"\bExpanding\s*\+=|\bExpanded\s*\+=|\bCollapsed\s*\+="),
+        // 日期与时间：DatePicker / CalendarDatePicker 都写 Date 并订阅 DateChanged，
+        // TimePicker 写 Time 并订阅 TimeChanged。写回同样会同步抛事件，是同一个回声问题。
+        ("Date", @"DateChanged\s*\+="),
+        ("Time", @"TimeChanged\s*\+="),
+        // 浮层与取值补完：TeachingTip 写 IsOpen 会同步抛 Closed（参数固定是 false），
+        // ColorPicker 写 Color 会同步抛 ColorChanged。两个都是同一个回声问题。
+        ("IsOpen", @"Closed\s*\+="),
+        ("Color", @"ColorChanged\s*\+="),
+        // 视图切换补完：SemanticZoom 写 IsZoomedInViewActive 会抛 ViewChangeCompleted
+        // （异步到的那一发按 EchoGuard 的既定取舍处理）；PipsPager 写
+        // SelectedPageIndex 会抛 SelectedIndexChanged —— 属性名与事件名不对称是官方的。
+        ("IsZoomedInViewActive", @"ViewChangeCompleted\s*\+="),
+        ("SelectedPageIndex", @"SelectedIndexChanged\s*\+="),
     };
 
     /// <summary>
@@ -744,6 +886,11 @@ internal static class EchoContractTests
     {
         "SelectedIndex", "SelectedItem", "IsChecked", "IsOn", "IsExpanded",
         "IsPaneOpen", "IsSelected", "Text", "Password", "Value", "Date", "Time",
+        // 浮层与取值补完：用户轻 dismiss / 点关闭按钮会改 IsOpen；拖光谱会改 Color。
+        "IsOpen", "Color",
+        // 视图切换补完：捏合 / 点缩小键会改 IsZoomedInViewActive；点小点或翻页按钮
+        // 会改 SelectedPageIndex。
+        "IsZoomedInViewActive", "SelectedPageIndex",
     };
 
     /// <summary>
@@ -783,6 +930,8 @@ internal static class EchoContractTests
         "BreadcrumbBar", "NavigationView", "Expander", "SettingsExpander",
         "NumberBox", "RatingControl", "ColorPicker", "SplitView", "TabView",
         "ScrollViewer", "DatePicker", "TimePicker", "CalendarDatePicker", "InfoBar",
+        // 浮层与双窗格补完：两个都是 WinUI 2 控件，落点与上面那批同形。
+        "TeachingTip", "TwoPaneView",
     };
 
     /// <summary>
@@ -1684,6 +1833,11 @@ internal static class EchoContractTests
         ("CheckBoxHandler", "Content", "这里是标签文字；换标签不动 IsChecked（ToggleButton 的选中态与 Content 无耦合）"),
         ("ComboBoxHandler", "Header", "只换标题文本；不改 SelectedIndex"),
         ("ComboBoxHandler", "PlaceholderText", "只换占位文本；同上"),
+        ("ComboBoxHandler", "IsEditable",
+            "可编辑是<b>模式开关</b>（收起态的框变成输入框）；官方把打的字放在另一个属性（Text）上，"
+            + "SelectedIndex 仍是下标——至于「下标后来变了」，那一次的作者是用户敲的字，不是这里这一笔"),
+        ("ComboBoxHandler", "IsTextSearchEnabled",
+            "只决定敲字时跳不跳到匹配项；关掉它<b>不改</b>当前 SelectedIndex，列表也不动"),
         ("ToggleSwitchHandler", "Header", "只换标题文本；不改 IsOn"),
         ("ToggleSwitchHandler", "OnContent", "开态文字；换文字不动 IsOn"),
         ("ToggleSwitchHandler", "OffContent", "关态文字；同上"),
@@ -1702,9 +1856,84 @@ internal static class EchoContractTests
         ("PasswordBoxHandler", "PlaceholderText", "只换占位文本；同上"),
         ("PasswordBoxHandler", "IsPasswordRevealButtonEnabled",
             "只决定「显示密码」那个按钮在不在，不动 Password 的内容"),
+        ("PasswordBoxHandler", "PasswordChar",
+            "掩码只在<b>显示层</b>：Password 里存的始终是明文，换面具不改内容"),
         ("AutoSuggestBoxHandler", "Header", "只换标题文本；不改 Text"),
         ("AutoSuggestBoxHandler", "PlaceholderText", "只换占位文本；同上"),
+        ("AutoSuggestBoxHandler", "QueryIcon",
+            "搜索图标是<b>内容槽</b>：官方收的是 IconElement，换它不动 Text（与改 Text 那条路没有耦合）"),
         ("NumberBoxHandler", "Header", "只换标题文本；不改 Value"),
+
+        // Slider：受控值是 Value，它由 Minimum / Maximum / StepFrequency / SnapsTo
+        // 那条夹取-吸附链决定。下面四样都<b>不在</b>那条链上，换它们不会把 Value 挪一下；
+        // 真正会挪的三样（StepFrequency / TickFrequency / SnapsTo）走
+        // SliderHandler.ApplySnapping，落在静默窗里——不登记。
+        ("SliderHandler", "Header", "只换标题文本；不在 RangeBase 的取值链上，不改 Value"),
+        ("SliderHandler", "Orientation", "只换轨道方向（横 / 竖）；方向不在取值链上，不改 Value"),
+        ("SliderHandler", "TickPlacement", "只决定刻度画在轨道内侧还是外侧；画在哪儿不改 Value"),
+        ("SliderHandler", "IsThumbToolTipEnabled", "只决定拖动时那个数值气泡出不出；气泡不改 Value"),
+        ("SliderHandler", "IsDirectionReversed",
+            "只改「值往哪边增大」（右小左大 / 下小上大）；Min / Max / Value 一个都不动，"
+            + "不在 RangeBase 的取值链上"),
+
+        // NavigationView 的搜索框槽位：挂/摘只是把一棵子树塞进模板上的
+        // AutoSuggestBox 属性（清成 null 就是摘掉）。选中项由 MenuItems /
+        // SelectedItem 决定，与这个槽位无关——摘掉搜索框不会让导航选中项动一下。
+        ("NavigationViewHandler", "AutoSuggestBox", "挂/摘搜索框只动模板上的那个槽位子树；选中项由 MenuItems / SelectedItem 决定，与此无关"),
+
+        // 汉堡键、面板标题、两个响应式断点：全是"外壳长什么样"，没有一条落在
+        // "当前选中第几项"那条链上。断点要<b>等窗口真的被拖过那个宽度</b>才生效，
+        // 写这一笔本身不触发形态切换（与改 PaneDisplayMode 不同，后者才走 Rebuilding）。
+        ("NavigationViewHandler", "IsPaneToggleButtonVisible",
+            "汉堡键在不在；<b>不等于</b>面板能不能开合（轻扫与顶部入口仍在），也不动选中"),
+        ("NavigationViewHandler", "PaneTitle", "面板标题文本（只在展开时可见）；换标题不动选中"),
+        ("NavigationViewHandler", "CompactModeThresholdWidth",
+            "响应式断点：只登记「窗口窄到多少才切紧凑」，写这一笔本身不触发形态切换，也不动选中"),
+        ("NavigationViewHandler", "ExpandedModeThresholdWidth",
+            "同上，另一侧断点（宽到多少切展开）；写这一笔不触发切换，也不动选中"),
+
+        // TabView：受控值是 TabView.SelectedIndex，下面这些写在两处——
+        // 页签条自己（按钮可见性）与每个 TabViewItem（标签 / 关闭按钮 / 图标数据）。
+        // 没有一条会牵动"当前选中第几个页签"，理由逐条贴在下面。
+        // ColorPicker / AutoSuggestBox：受控值是 Color 与 Text。下面这两处都是
+        // "模式开关"，不是"值本身"——它们决定的是"将来那一次用户操作怎么写值"，
+        // 而写这一笔当下不改值（也没有哪一发事件是它抛的）。
+        ("ColorPickerHandler", "IsMoreButtonVisible",
+            "只决定「更多」那个展开按钮在不在（关掉反而常驻摊开）；不夹取、不改 Color"),
+        ("AutoSuggestBoxHandler", "UpdateTextOnSelect",
+            "只决定点候选时填不填框；那一笔是用户点候选写的（走 SuggestionChosen），"
+            + "不是这里这一笔——写它当下不改 Text"),
+
+        ("TabViewHandler", "IsAddTabButtonVisible", "只决定「新建页签」那个按钮在不在；不动 SelectedIndex"),
+        ("TabViewHandler", "Header", "写在 TabViewItem 上是页签标签文字；换标签不动选中"),
+        ("TabViewHandler", "IsClosable", "页签关闭按钮的可见性；不动选中"),
+        ("TabViewHandler", "TabWidthMode",
+            "页签宽度怎么算（等宽 / 按文字 / 收窄）；页签还是那几个，SelectedIndex 不变"),
+        ("TabViewHandler", "CloseButtonOverlayMode",
+            "关闭按钮什么时候<b>可见</b>；能不能关是 IsClosable 的事，可见性不动选中"),
+
+        // 页签图标走 IconSource——它是<b>数据对象</b>不是 UIElement（不进可视树），
+        // 于是改字形 / 换图 / 换着色都是纯数据变更，页签条不会因此重算选中。
+        ("TabViewHandler", "Glyph", "IconSource 是数据对象，改字形不进可视树也不动选中"),
+        ("TabViewHandler", "IconSource", "整只换掉图标数据对象；页签条不因图标变化重算选中"),
+        ("TabViewHandler", "UriSource", "位图图标的地址；同上"),
+        ("TabViewHandler", "ShowAsMonochrome", "位图图标的着色开关；同上"),
+
+        ("PivotHandler", "Title", "左上角标题文本；换标题不动选中"),
+        ("PivotHandler", "Header", "写在 PivotItem 上是页标签文字；换标签不动选中"),
+
+        // SemanticZoom：两个槽位是"把一棵子树塞进属性"，不是"改当前停在哪个视图"。
+        // 换掉槽位不会让控件自己发起一次视图切换——ViewChangeCompleted 只在切换时抛，
+        // 与 IsZoomedInViewActive 是两条独立的路。万一将来某版会抛，代价也只是
+        // 一次"值相同、不重渲染"的空转回调（EchoGuard 那条既定取舍）。
+        ("SemanticZoomHandler", "ZoomedInView", "换槽位只动那一侧的子树；不发起视图切换，不动 IsZoomedInViewActive"),
+        ("SemanticZoomHandler", "ZoomedOutView", "同上"),
+
+        // 命令条上的项（AppBarButton / AppBarToggleButton）：整组重建的子部件，
+        // 写点都发生在"刚 new 出来的那个实例"上。图标是子部件本身（换图标不动
+        // IsChecked），IsEnabled 用户改不动 —— 两条都不牵动受控值。
+        ("AppBarCommands", "Icon", "命令项的图标是子部件；换图标不动 IsChecked"),
+        ("AppBarCommands", "IsEnabled", "只是能不能点，用户改不动它；也不动 IsChecked"),
     };
 
     /// <summary>不受控属性的写入：<c>X.Prop =</c>，排除 <c>==</c> / <c>&gt;=</c> / <c>=&gt;</c> / 插值 <c>={</c>。</summary>
@@ -2409,6 +2638,11 @@ internal static class EchoContractTests
         // 源码依据见 ItemsViewHandler 类注释（Selector_Partial.cpp）。
         ("ItemsViewHandler", "NotReady",
             "Selector 没有模板闸门（OnSelectedIndexChanged 早退只问重入锁与 IsInit），「未就绪」在这里没有答案可问，判据一直接传 true"),
+
+        // 同一个理由，同一条基类契约：ListBox / FlipView 走的也是 Selector，
+        // 只是不在 ListViewBase 那条路上（所以另有一个 handler 基类）。
+        ("SelectorHandler", "NotReady",
+            "Selector 没有模板闸门（OnSelectedIndexChanged 早退只问重入锁与 IsInit），「未就绪」在这里没有答案可问，判据一直接传 true"),
     };
 
     /// <summary>选中类回执通道：<c>SelectionChanged +=</c>，真订阅，不是"出现过这个词"。</summary>
@@ -2613,6 +2847,17 @@ internal static class EchoContractTests
         ("BreadcrumbBarHandler", "Items", "临时载体 ItemsControl——它不进可视树、没有订阅；真控件那笔走的是 ItemsSource"),
         ("BreadcrumbBarHandler", "ItemsSource", "BreadcrumbBar 的回执是 ItemClicked（只在点击时抛），换 ItemsSource 不抛"),
         ("AutoSuggestBoxHandler", "ItemsSource", "候选列表：回执是 SuggestionChosen / TextChanged，换候选项不抛这两者"),
+        ("MenuFlyouts", "Items",
+            "菜单浮出层：MenuFlyout 不是 Selector，也没有选中类回执通道；而且每次都是"
+            + "新建一个空 flyout 再往里加项（整体重建），不存在\"改一个已在用的集合\""),
+        ("MenuBarHandler", "Items",
+            "菜单栏：MenuBar 与 MenuBarItem 都不是 Selector，也没有选中类回执通道"
+            + "（MenuBarItem 展开的是它自己的浮出层，走的是 MenuFlyoutItem.Click，不是 SelectionChanged）；"
+            + "组内容整体重建，与 MenuFlyouts 同形"),
+        ("TreeViewHandler", "Children",
+            "树节点：TreeViewNode 不是 Selector，也没有选中类回执通道（TreeView 压根没有"
+            + " SelectionChanged 事件，选中只有 ItemInvoked 这一个出口，且它只在点击时抛）；"
+            + "节点树在挂载期整体物化，不存在\"改一个已在用的集合\""),
     };
 
     /// <summary>
@@ -2624,7 +2869,13 @@ internal static class EchoContractTests
 
     /// <summary>会被这一道认作"集合"的属性名。窄一点，别把 <c>Text =</c> 这类扫进来。</summary>
     private static readonly HashSet<string> CollectionNames =
-        new(new[] { "Items", "MenuItems", "Children", "ItemsSource", "SelectedItems", "Columns", "Rows", "TabItems" },
+        // "RootNodes" 是 TreeView 的节点集合（与 TreeViewNode.Children 同一族），
+        // 一并收进来：将来若有人在更新期动它，这一道要看得见。
+        new(new[]
+            {
+                "Items", "MenuItems", "Children", "ItemsSource", "SelectedItems", "Columns", "Rows", "TabItems",
+                "RootNodes",
+            },
             StringComparer.Ordinal);
 
     private static readonly HashSet<string> InertCollectionKeys =
@@ -3600,6 +3851,10 @@ internal static class EchoContractTests
             "宿主构造里订一次，宿主进程内只有一个"),
         ("Hosting/ReactorHost.cs", "MapChanged",
             "宿主构造里订一次；同上"),
+        ("Internal/Handlers.Controls.cs", "ContainerContentChanging",
+            "ListView / GridView：订在 Initialize（每控件一次），没有 Patch 路径；"
+            + "用途是把项元素的 AutomationProperties.Name 传给虚拟化生成的项容器"
+            + "（项本身是控件时 UWP 不会自己推导容器名）"),
         ("Internal/Handlers.Template.cs", "ItemClicked",
             "BreadcrumbBar：`+=` 在 Mount（每实例一次），`-=` 在 Unmount。"
             + "它安全靠的是 Mount 只跑一次，不是靠配对——所以登记而不是算幂等"),
@@ -3609,6 +3864,26 @@ internal static class EchoContractTests
             "自绘路径：Mount 里订一次；同上"),
         ("Internal/Handlers.Virtual.cs", "ViewChanged",
             "自绘路径：Mount 里订一次；同上"),
+        ("Internal/Handlers.Menus.cs", "Click",
+            "MenuFlyoutItem：菜单每次整体重建（见 MenuFlyouts 的注释），+= 挂在刚 new 出来的"
+            + "那个实例上，旧项连同它的订阅一起回收——没有 Patch 路径，也就叠不上第二层"),
+        ("Internal/Handlers.Shell.cs", "Click",
+            "AppBarButton：命令组与菜单同形（见 CommandBarHandler.ApplyCommands 的注释），"
+            + "整组重建、+= 挂在刚 new 出来的那个实例上，没有 Patch 路径可叠"),
+        ("Internal/Handlers.Shell.cs", "Checked",
+            "AppBarToggleButton：与 AppBarButton 同一个形状，+= 挂在刚 new 出来的那个"
+            + "实例上；旧实例走 AppBarCommands.Unmount 摘掉回声登记"),
+        ("Internal/Handlers.Shell.cs", "Unchecked",
+            "AppBarToggleButton：同上（Checked / Unchecked 是一对，各记一条）"),
+        ("Internal/Handlers.Views.cs", "Loaded",
+            "ParallaxView：参照的那个兄弟要等进了可视树才数得出来（Mount 那一刻还问不到"
+            + " Parent），所以 `+=` 在 Mount（每实例一次），`-=` 在 Unmount"),
+        ("Internal/Handlers.Overlays.cs", "Loaded",
+            "TeachingTip：目标要等进了可视树才认得出（Mount 那一刻还问不到 Parent），"
+            + "所以 `+=` 在 Mount（每实例一次），`-=` 在 Unmount —— 安全靠的是 Mount 只跑一次"),
+        ("Internal/Handlers.Views.cs", "Invoked",
+            "SwipeItem：与命令条 / 菜单同一个形状（见 SwipeControlHandler.ApplyItems 的注释），"
+            + "整组重建、`+=` 挂在刚 new 出来的那个实例上，没有 Patch 路径可叠"),
     };
 
     /// <summary>`X.Event +=` 的订阅点（含所在方法的行范围，便于查配对退订）。</summary>

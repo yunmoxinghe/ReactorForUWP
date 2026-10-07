@@ -182,6 +182,11 @@ internal static class ElementHandlerRegistry
         // 文本与基础控件
         Register<TextBlockElement, TextBlockHandler>();
         Register<ButtonElement, ButtonHandler>();
+
+        // MenuFlyout / MenuItem / MenuSeparator 不在这里注册：它们不是 UIElement，
+        // 走不了协调器（见 Internal/Handlers.Menus.cs 的注释）。
+        Register<DropDownButtonElement, DropDownButtonHandler>();
+        Register<SplitButtonElement, SplitButtonHandler>();
         Register<TextBoxElement, TextBoxHandler>();
         Register<CheckBoxElement, CheckBoxHandler>();
         Register<SliderElement, SliderHandler>();
@@ -209,6 +214,7 @@ internal static class ElementHandlerRegistry
         // 进度与媒体
         Register<ProgressElement, ProgressHandler>();
         Register<ProgressRingElement, ProgressRingHandler>();
+        Register<InfoBadgeElement, InfoBadgeHandler>();
         Register<ImageElement, ImageHandler>();
 
         // 集合
@@ -220,12 +226,78 @@ internal static class ElementHandlerRegistry
         Register<HyperlinkButtonElement, HyperlinkButtonHandler>();
         Register<FontIconElement, FontIconHandler>();
         Register<BitmapIconElement, BitmapIconHandler>();
+        Register<ImageIconElement, ImageIconHandler>();
         Register<BreadcrumbBarElement, BreadcrumbBarHandler>();
         Register<ExpanderElement, ExpanderHandler>();
         Register<SettingsCardElement, SettingsCardHandler>();
         Register<SettingsExpanderElement, SettingsExpanderHandler>();
         Register<FrameElement, FrameHandler>();
         Register<VirtualizingListElement, VirtualizingListHandler>();
+
+        // 页签容器 / 富文本：页签条与语法高亮代码块（Gallery 的源码展示要用）
+        Register<TabViewElement, TabViewHandler>();
+        Register<PivotElement, PivotHandler>();
+        Register<RichTextBlockElement, RichTextBlockHandler>();
+
+        // 外壳与命令：分栏外壳 / 命令条 / 菜单栏
+        // （MenuBarItem 不是独立元素——它是 MenuBarElement 里的一组数据，见该类注释）
+        Register<SplitViewElement, SplitViewHandler>();
+        Register<CommandBarElement, CommandBarHandler>();
+        Register<MenuBarElement, MenuBarHandler>();
+
+        // 反馈类：评分与人物头像
+        Register<RatingElement, RatingControlHandler>();
+        Register<PersonPictureElement, PersonPictureHandler>();
+
+        // 日期与时间：四个都是 UWP 原生控件（WinUI 2 没有另做一套）
+        Register<DatePickerElement, DatePickerHandler>();
+        Register<TimePickerElement, TimePickerHandler>();
+        Register<CalendarDatePickerElement, CalendarDatePickerHandler>();
+        Register<CalendarViewElement, CalendarViewHandler>();
+
+        // 按钮族补齐：会保持按下的按钮 / 按住连发的按钮 / 会保持按下的拆分按钮
+        Register<ToggleButtonElement, ToggleButtonHandler>();
+        Register<RepeatButtonElement, RepeatButtonHandler>();
+        Register<ToggleSplitButtonElement, ToggleSplitButtonHandler>();
+
+        // 集合补完：列表框与翻页视图（都只是 Selector，走另一条 handler 基类），
+        // 以及树（节点是数据树，不是元素树）
+        Register<ListBoxElement, ListBoxHandler>();
+        Register<FlipViewElement, FlipViewHandler>();
+        Register<TreeViewElement, TreeViewHandler>();
+
+        // 布局补完：绝对定位 / 单子元素缩放 / 不等大小换行网格 / 相对布局
+        // 前三个的"位置"写在子元素身上（附加属性），走 AttachChild 那条钩子；
+        // RelativePanel 要指向兄弟，落在孩子们都造好之后的整体重落（见该类注释）
+        Register<CanvasElement, CanvasHandler>();
+        Register<ViewboxElement, ViewboxHandler>();
+        Register<VariableSizedWrapGridElement, VariableSizedWrapGridHandler>();
+        Register<RelativePanelElement, RelativePanelHandler>();
+
+        // 状态与信息补完：下拉刷新容器（WinUI 2 真控件，单子元素容器）
+        Register<RefreshContainerElement, RefreshContainerHandler>();
+
+        // 浮层与双窗格补完：教学提示（受控 IsOpen，目标填同层下标）与双窗格
+        // （两个槽位都自己管；它的 Mode 是只读的，所以没有受控值）
+        Register<TeachingTipElement, TeachingTipHandler>();
+        Register<TwoPaneViewElement, TwoPaneViewHandler>();
+
+        // 取值与富文本补完：受控 Color 的取色器、文本住在 Document 里的富文本编辑框
+        Register<ColorPickerElement, ColorPickerHandler>();
+        Register<RichEditBoxElement, RichEditBoxHandler>();
+
+        // 视图切换与滑动补完：语义缩放（两个槽位要过 ISemanticZoomInformation 检查）、
+        // 分页指示器（受控 SelectedPageIndex）、滑动命令容器（四组命令 + 单子内容）
+        Register<SemanticZoomElement, SemanticZoomHandler>();
+        Register<PipsPagerElement, PipsPagerHandler>();
+        Register<SwipeControlElement, SwipeControlHandler>();
+        Register<ParallaxViewElement, ParallaxViewHandler>();
+
+        // 形状：椭圆 / 矩形 / 直线（UWP 原生 Windows.UI.Xaml.Shapes，走
+        // ShapeHandler 那个泛型基类：描边那一套在官方 Shape 基类上，不抄三遍）
+        Register<EllipseElement, EllipseHandler>();
+        Register<RectangleElement, RectangleHandler>();
+        Register<LineElement, LineHandler>();
 
         // 逃生舱：把一棵原生控件树挂进 Reactor 布局（Native()）
         Register<NativeElement, NativeHandler>();
@@ -234,5 +306,22 @@ internal static class ElementHandlerRegistry
         SingleChildAccessor.Register<ToolkitControls.SettingsExpander>(control => (
             () => control.Content as UIElement,
             value => control.Content = value!));
+
+        // SplitView 也是单子元素容器（继承 Control，不是 ContentControl），
+        // 不登记的话它的 Content 每轮都走"卸载 + 整棵子树重建"那条兜底分支。
+        SingleChildAccessor.Register<Windows.UI.Xaml.Controls.SplitView>(control => (
+            () => control.Content as UIElement,
+            value => control.Content = value!));
+
+        // Viewbox 也是：它继承 FrameworkElement（不是 ContentControl），
+        // 子内容在 Child 上而不是 Content 上。
+        SingleChildAccessor.Register<Windows.UI.Xaml.Controls.Viewbox>(control => (
+            () => control.Child,
+            value => control.Child = value));
+
+        // ParallaxView 同理（WinUI 2 的 FrameworkElement，子内容在 Child 上）。
+        SingleChildAccessor.Register<Microsoft.UI.Xaml.Controls.ParallaxView>(control => (
+            () => control.Child,
+            value => control.Child = value));
     }
 }
