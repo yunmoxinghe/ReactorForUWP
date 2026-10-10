@@ -42,7 +42,8 @@ public sealed class TeachingTipBasic : Component
                     title: "这一步是干什么的",
                     subtitle: "教学提示（受控 IsOpen）",
                     child: TextBlock("正文是任意元素树——它是 ContentControl。")
-                        .Wrap(),
+                        .Wrap()
+                        .Margin(0, 16, 0, 0),
                     isOpen: open,
                     targetIndex: 1,
                     preferredPlacement: MuxControls.TeachingTipPlacementMode.Bottom,

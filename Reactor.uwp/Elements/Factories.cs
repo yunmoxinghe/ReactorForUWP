@@ -41,11 +41,26 @@ public static partial class Factories
         new(Orientation.Horizontal, FilterChildren(children)) { Spacing = spacing };
 
     /// <param name="isIconVisible">左侧等级图标显不显示（默认显示）。</param>
+    /// <param name="title">标题（消息上方那行加粗的短句），不给就是不显示。</param>
+    /// <param name="isClosable">能不能被用户关掉（右上角 ×），官方默认 <c>false</c>。</param>
+    /// <param name="isOpen">
+    /// 初始开合。<b>种子值</b>：只在挂载时写一次，之后归控件自己——
+    /// 用户关掉之后不会被下一轮重渲染重新打开。
+    /// </param>
     public static InfoBarElement InfoBar(
         string message,
         MuxControls.InfoBarSeverity severity = MuxControls.InfoBarSeverity.Informational,
-        bool isIconVisible = true) =>
-        new(message, severity) { IsIconVisible = isIconVisible };
+        bool isIconVisible = true,
+        string? title = null,
+        bool isClosable = false,
+        bool isOpen = true) =>
+        new(message, severity)
+        {
+            IsIconVisible = isIconVisible,
+            Title = title,
+            IsClosable = isClosable,
+            IsOpen = isOpen,
+        };
 
     /// <summary>嵌入一个无 props 的子组件。</summary>
     public static ComponentElement Component<T>() where T : Component, new() =>

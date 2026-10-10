@@ -1,6 +1,8 @@
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
+using Windows.UI;
 using Windows.UI.Xaml;
+using Windows.UI.Xaml.Media;
 using static Microsoft.UI.Reactor.Factories;
 
 namespace Reactor.Gallery.Samples;
@@ -19,6 +21,13 @@ namespace Reactor.Gallery.Samples;
 /// </remarks>
 public sealed class LayoutGrid : Component
 {
+    // ── 色块用的刷子做成静态字段 ───────────────────────────────
+    // 刷子按「引用」比：每轮渲染 new 一支就是一次真的重绘，写内联会每帧重画。
+    private static readonly SolidColorBrush Red = new(Colors.Red);
+    private static readonly SolidColorBrush Blue = new(Colors.Blue);
+    private static readonly SolidColorBrush Green = new(Colors.Green);
+    private static readonly SolidColorBrush Yellow = new(Colors.Yellow);
+
     public override Element Render() =>
         VStack(12,
             Grid(
@@ -38,6 +47,24 @@ public sealed class LayoutGrid : Component
                 TextBlock("alice@example.com")
                     .Grid(row: 1, column: 1)
                     .VAlign(VerticalAlignment.Center)),
+
+            TextBlock("官方那张 3×3 定长网格：轨道 50 / 50 / 50，容器 240×160 灰底").Body(),
+
+            Grid(
+                new[] { GridSize.Px(50), GridSize.Px(50), GridSize.Px(50) },
+                new[] { GridSize.Px(50), GridSize.Px(50), GridSize.Px(50) },
+                Rectangle().Fill(Red).Size(50, 50).Grid(row: 0, column: 0),
+                Rectangle().Fill(Blue).Size(50, 50).Grid(row: 1, column: 0),
+                Rectangle().Fill(Green).Size(50, 50).Grid(row: 0, column: 1),
+                Rectangle().Fill(Yellow).Size(50, 50).Grid(row: 1, column: 1))
+                .Background(Colors.Gray)
+                .Size(240, 160),
+
+            TextBlock("定长轨道（Px）与 Auto / Star 的差别就在这儿：轨道尺寸先定死，"
+                      + "右边与下边多出来的那一块没人占 —— 那片灰就是没被占的空间。")
+                .Caption()
+                .Subtle()
+                .Wrap(),
 
             Border(
                     TextBlock("Border：边框 + 背景 + 圆角，装任何东西")

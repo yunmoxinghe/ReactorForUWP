@@ -22,6 +22,11 @@ namespace Reactor.Gallery.Samples;
 /// 才会把它改写成边界值。
 /// </para>
 /// <para>
+/// <b>步进与按钮位置。</b><c>smallChange</c> / <c>largeChange</c> 决定一次加多少，
+/// <c>spinButtonPlacementMode</c> 决定按钮摆在哪儿：增减按钮那一档用官方的
+/// <c>Compact</c>，回绕那一档用 <c>Inline</c>，正好能对着看。
+/// </para>
+/// <para>
 /// <c>decimalPlaces</c> 是 <c>NumberFormatter</c> 的简化入口（内部按需建一个
 /// <c>DecimalFormatter</c>）。要货币符号、千分位这类更花的东西，
 /// 官方那条路是直接给 <c>NumberFormatter</c> 一个对象——本库没有为它开入口，
@@ -36,6 +41,7 @@ public sealed class NumberBoxOptions : Component
         var (clamped, setClamped) = UseState(50.0);
         var (wrapped, setWrapped) = UseState(0.0);
         var (money, setMoney) = UseState(12.5);
+        var (spin, setSpin) = UseState(10.0);
 
         return VStack(12,
             TextBlock("表达式").Caption().Subtle(),
@@ -56,6 +62,15 @@ public sealed class NumberBoxOptions : Component
                 max: 100,
                 validationMode: MuxControls.NumberBoxValidationMode.InvalidInputOverwritten),
             TextBlock($"同一个 state：{clamped:0.##}").Caption().Subtle(),
+
+            TextBlock("增减按钮").Caption().Subtle(),
+            NumberBox(Optional<double>.Of(spin), setSpin,
+                header: "SmallChange 10 / LargeChange 100（Compact）",
+                smallChange: 10,
+                largeChange: 100,
+                spinButtonPlacementMode: MuxControls.NumberBoxSpinButtonPlacementMode.Compact)
+                .AutomationName("带增减按钮的数字框"),
+            TextBlock($"当前 {spin:0.##}").Caption().Subtle(),
 
             TextBlock("回绕与小数位").Caption().Subtle(),
             NumberBox(Optional<double>.Of(wrapped), setWrapped,

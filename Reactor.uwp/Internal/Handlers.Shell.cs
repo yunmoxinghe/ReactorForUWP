@@ -104,22 +104,25 @@ internal sealed class SplitViewHandler : ElementHandler<SplitViewElement, WuCont
         Slots.Set(control, (newElement.Pane, newElement.Content));
     }
 
-    protected override void Unmount(Reconciler reconciler, WuControls.SplitView control)
-    {
-        if (Slots.TryGetValue(control, out var slots))
-        {
-            if (control.Pane is UIElement pane)
-            {
-                reconciler.UnmountNative(pane, slots.Pane ?? EmptyElement.Instance);
-            }
+    protected override void Unmount(Reconciler reconciler, WuControls.SplitView control) =>
+        // Content 槽由 UnmountTree 的通用路径递归，Pane 槽由下面的 ExtraSlotsOf 报出
+        // ——这里不再手写任何一次递归。以前是手写的，因为当时公共路径的卸载侧
+        // 认不出这个类（见 SingleChildAccessor 的类注释），现在那个洞已经收了。
+        Slots.Remove(control);
 
-            if (control.Content is UIElement content)
-            {
-                reconciler.UnmountNative(content, slots.Content ?? EmptyElement.Instance);
-            }
+    /// <summary>
+    /// <c>Pane</c> 是主槽之外的第二个槽：<c>UnmountTree</c> 遍历到这里才能连同
+    /// 里面的组件一起回收。
+    /// </summary>
+    protected override IReadOnlyList<(UIElement Native, Element? Element)> ExtraSlotsOf(
+        WuControls.SplitView control)
+    {
+        if (!Slots.TryGetValue(control, out var slots) || control.Pane is not { } pane)
+        {
+            return Array.Empty<(UIElement, Element?)>();
         }
 
-        Slots.Remove(control);
+        return new[] { (pane, slots.Pane) };
     }
 
     protected override Element? SingleChildOf(SplitViewElement element) => element.Content;

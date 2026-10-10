@@ -154,6 +154,56 @@ internal static class ReadyArmTests
 
         Exhaustive();
         Sequences();
+        ReadyPredicate();
+    }
+
+    /// <summary>
+    /// 「算不算就绪」的判据：<b>不能只看我们自己那份标记</b>。
+    /// </summary>
+    /// <remarks>
+    /// 那份标记<b>唯一的写入者是 <c>Loaded</c> 事件的回调</b>。而 UWP/WinUI 的
+    /// <c>Loaded</c>/<c>Unloaded</c> 有乱序与不配对的已知问题：同一个 UI pass 内
+    /// remove 再 add 回树，XAML <b>只发 <c>Unloaded</c>、不发 <c>Loaded</c></b>
+    /// （XamlBehaviors#251；乱序见 Win2D#954）。于是标记永远是 false，
+    /// 而"未就绪"的语义是"这期间的事件一发都不放行" —— 控件在树上、用户点得到，
+    /// 却一发都不响应，且不报任何错。
+    /// <para>
+    /// 修法：<b>或上控件此刻的 <c>IsLoaded</c></b>。它答的是同一个问题，且"此刻
+    /// 在树上"必然蕴含"WinUI 已解禁 <c>m_blockSelecting</c>"（控件自己的 Loaded
+    /// 抛出来时模板子树已经就位，WinUI 正是那一刻解禁的）。
+    /// </para>
+    /// <para>
+    /// 折叠区展开、虚拟化回收、<c>Frame</c> 切页都会踩 remove→add 这种形状。
+    /// </para>
+    /// </remarks>
+    private static void ReadyPredicate()
+    {
+        Program.Section("就绪闸 / 算不算就绪（不能只看自己那份标记）");
+
+        Program.Check(
+            "标记已置 → 就绪（哪怕此刻离树：m_blockSelecting 不会变回去）",
+            ReadyPolicy.IsReady(marked: true, isLoaded: false, trustLive: true));
+
+        Program.Check(
+            "标记未置、但此刻在树 → 就绪（Loaded 不会来了，不能干等）",
+            ReadyPolicy.IsReady(marked: false, isLoaded: true, trustLive: true));
+
+        Program.Check(
+            "标记未置、此刻也不在树 → 未就绪（真的还没进过树）",
+            !ReadyPolicy.IsReady(marked: false, isLoaded: false, trustLive: true));
+
+        Program.Check(
+            "两者都成立 → 就绪",
+            ReadyPolicy.IsReady(marked: true, isLoaded: true, trustLive: true));
+
+        // 反向对照：关掉开关必须回到旧行为 —— 它红了才说明这一条摸到了真病。
+        Program.Check(
+            "反向对照（关掉开关）：标记未置就一律未就绪，哪怕此刻在树",
+            !ReadyPolicy.IsReady(marked: false, isLoaded: true, trustLive: false));
+
+        Program.Check(
+            "反向对照（关掉开关）：标记已置仍然就绪（旧行为不变）",
+            ReadyPolicy.IsReady(marked: true, isLoaded: false, trustLive: false));
     }
 
     /// <summary>八个二进制输入 → 期望动作。判据是纯函数，直接穷举。</summary>

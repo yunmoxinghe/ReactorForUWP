@@ -49,7 +49,8 @@ public sealed class FlipViewBasic : Component
                         .Background(item.Color)
                         .Padding(12)
                         .AutomationName($"第 {item.Name} 页")))
-                .Height(180),
+                .Height(180)
+                .MaxWidth(400),
 
             HStack(12,
                 Button("上一页", () => setIndex(index <= 0 ? Pages.Length - 1 : index - 1)),

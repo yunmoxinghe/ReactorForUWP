@@ -59,7 +59,7 @@ public sealed class PivotBasic : Component
                             TextBlock("三页各自的状态互不影响——它们本来就是三棵树。")
                                 .Caption().Subtle().Wrap())),
                 })
-                .MinHeight(210),
+                .MinHeight(400),
 
             TextBlock($"当前第 {index + 1} 页：{PageNames[index]}").Caption().Subtle());
     }

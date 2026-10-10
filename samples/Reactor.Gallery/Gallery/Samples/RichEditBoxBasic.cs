@@ -41,7 +41,7 @@ public sealed class RichEditBoxBasic : Component
                     header: "内容",
                     placeholderText: "打点什么进去",
                     isReadOnly: readOnly)
-                .Height(160),
+                .Size(800, 200),
 
             TextBlock($"state 里 {text.Length} 个字符；回调过 {times} 次")
                 .Caption().Subtle().Wrap(),

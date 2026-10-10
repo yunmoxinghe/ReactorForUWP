@@ -25,7 +25,13 @@ public sealed class TimePickerBasic : Component
     {
         var (time, setTime) = UseState(new TimeSpan(13, 45, 0));
 
-        return VStack(14,
+        return VStack(8,
+            TextBlock("裸控件（不带 header）").Body(),
+            TimePicker(Optional<TimeSpan>.Of(time), setTime),
+            TextBlock("官方第一档就是一个「什么都不给」的 TimePicker：没有 header，"
+                      + "也没有标题那一刻——受控归受控，外观上它就只有三个框。")
+                .Caption().Subtle().Wrap(),
+
             TextBlock("受控（24 小时制）").Body(),
             TimePicker(
                 Optional<TimeSpan>.Of(time),

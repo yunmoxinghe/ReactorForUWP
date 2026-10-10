@@ -322,7 +322,13 @@ internal sealed class ToggleSplitButtonHandler
     protected override void Unmount(Reconciler reconciler, MuxControls.ToggleSplitButton control)
     {
         CheckEcho.Forget(control);
-        control.Click -= OnToggleSplitClick;
+
+        if (ClickHandlers.TryGetValue(control, out var bound) && bound is { } attached)
+        {
+            control.Click -= attached;
+            ClickHandlers.Remove(control);
+        }
+
         Clicks.Remove(control);
         Rebind(control, null);
 
@@ -357,7 +363,12 @@ internal sealed class ToggleSplitButtonHandler
     /// <summary>点击回调：先摘后挂（与 <c>SplitButtonHandler</c> 同形）。</summary>
     private static void RebindClick(MuxControls.ToggleSplitButton control, Action? onClick)
     {
-        control.Click -= OnToggleSplitClick;
+        // 先摘旧的：委托是闭包，只能靠存下来的那一份解绑。
+        if (ClickHandlers.TryGetValue(control, out var bound) && bound is { } attached)
+        {
+            control.Click -= attached;
+            ClickHandlers.Remove(control);
+        }
 
         if (onClick is null)
         {
@@ -366,11 +377,22 @@ internal sealed class ToggleSplitButtonHandler
         }
 
         Clicks.Set(control, onClick);
-        control.Click += OnToggleSplitClick;
+
+        // 回调里用<b>订阅时那个引用</b>（<c>control</c>）查表，不用回调给的
+        // <c>sender</c>：WinRT 不保证同一原生对象每次都给同一个托管包装，
+        // 拿 sender 查按控件建的表会查不到，表现就是"点了没反应"。
+        // 依据见 RadioButtonsHandler.Handlers 字段的注释。
+        Windows.Foundation.TypedEventHandler<MuxControls.SplitButton, MuxControls.SplitButtonClickEventArgs> handler =
+            (s, args) => Clicks[control]?.Invoke();
+
+        control.Click += handler;
+        ClickHandlers.Set(control, handler);
     }
 
-    private static void OnToggleSplitClick(MuxControls.SplitButton sender, object args) =>
-        Clicks[(MuxControls.ToggleSplitButton)sender]?.Invoke();
+    /// <summary>每个按钮上当前挂着的点击委托（闭包，必须存下来才能 <c>-=</c>）。</summary>
+    private static readonly WeakTable<
+        MuxControls.ToggleSplitButton,
+        Windows.Foundation.TypedEventHandler<MuxControls.SplitButton, MuxControls.SplitButtonClickEventArgs>?> ClickHandlers = new();
 
     private static void Rebind(MuxControls.ToggleSplitButton control, Action<bool>? callback)
     {

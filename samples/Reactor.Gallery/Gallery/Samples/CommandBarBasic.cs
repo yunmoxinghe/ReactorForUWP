@@ -38,17 +38,19 @@ public sealed class CommandBarBasic : Component
                             TextBlock($"最后一次动作：{last}").Body())
                         .Padding(16)
                         .WithBorder(ThemeResource.Brush("CardStrokeColorDefaultBrush")),
+                    // 图标走官方 Symbol 枚举（Symbol.Add / Edit / Delete / Share / Setting），
+                    // 与官方那一页同一套：Symbol 枚举就是 Segoe MDL2 Assets 里常用码位的具名清单。
                     primary: new Element?[]
                     {
-                        AppBarButton("新建", "\uE710", () => Report("新建")),
-                        AppBarButton("编辑", "\uE70F", () => Report("编辑")),
-                        AppBarButton("删除", "\uE74D", () => Report("删除")),
+                        AppBarButton("新建", SymbolIcon(Symbol.Add), () => Report("新建")),
+                        AppBarButton("编辑", SymbolIcon(Symbol.Edit), () => Report("编辑")),
+                        AppBarButton("删除", SymbolIcon(Symbol.Delete), () => Report("删除")),
                         AppBarSeparator(),
-                        AppBarButton("共享", "\uE72D", () => Report("共享")),
+                        AppBarButton("共享", SymbolIcon(Symbol.Share), () => Report("共享")),
                     },
                     secondary: new Element?[]
                     {
-                        AppBarButton("设置", "\uE713", () => Report("设置")),
+                        AppBarButton("设置", SymbolIcon(Symbol.Setting), () => Report("设置")),
                         AppBarSeparator(),
                         AppBarButton("关于", "\uE946", () => Report("关于")),
                     },
@@ -65,8 +67,8 @@ public sealed class CommandBarBasic : Component
                 content: TextBlock("这一条只有两个命令，溢出口里多半是空的。").Caption().Subtle(),
                 primary: new Element?[]
                 {
-                    AppBarButton("新建", "\uE710", () => Report("新建（常驻）")),
-                    AppBarButton("编辑", "\uE70F", () => Report("编辑（常驻）")),
+                    AppBarButton("新建", SymbolIcon(Symbol.Add), () => Report("新建（常驻）")),
+                    AppBarButton("编辑", SymbolIcon(Symbol.Edit), () => Report("编辑（常驻）")),
                 },
                 overflowButtonVisibility: CommandBarOverflowButtonVisibility.Visible),
             TextBlock("默认是 Auto——没东西可溢出时它自己藏起来。改成 Visible 只是「一直显示」，"

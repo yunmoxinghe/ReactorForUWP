@@ -43,6 +43,16 @@ public sealed class DatePickerBasic : Component
             TextBlock("藏掉「日」之后值还在（只是不显示、也不能改），月份里的哪一天仍是原来那一天。")
                 .Caption().Subtle(),
 
+            TextBlock("藏掉「年」那一栏").Body(),
+            DatePicker(
+                Optional<DateTimeOffset>.Of(date),
+                setDate,
+                header: "yearVisible: false",
+                yearVisible: false),
+            TextBlock("三栏各自独立，藏哪栏都不动另外两栏；年份看不见了，值里的年份仍在。"
+                      + "（官方那一档还带了 DayFormat，本版没接这个属性。）")
+                .Caption().Subtle().Wrap(),
+
             TextBlock("限年份").Body(),
             DatePicker(
                 Optional<DateTimeOffset>.Of(date),

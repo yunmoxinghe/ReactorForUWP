@@ -1,6 +1,7 @@
 using System.Linq;
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
+using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
 using static Microsoft.UI.Reactor.Factories;
 
@@ -51,7 +52,8 @@ public sealed class AutoSuggestBasic : Component
                 onTextChanged: setQuery,
                 onQuerySubmitted: text => setPicked(text),
                 queryIcon: FontIcon("\uE721"),
-                updateTextOnSelect: fillText),
+                updateTextOnSelect: fillText)
+                .Width(300),
             CheckBox(Optional<bool?>.Of(fillText), setFillText,
                 "点候选时把它填进输入框（UpdateTextOnSelect）"),
             TextBlock($"草稿文本：{query}").Caption().Subtle(),
@@ -65,11 +67,15 @@ public sealed class AutoSuggestBasic : Component
             AutoSuggestBox(
                 suggestions: Cities,
                 placeholderText: "换一个符号图标（SymbolIcon）",
-                queryIcon: SymbolIcon(Symbol.Find)),
+                queryIcon: SymbolIcon(Symbol.Find))
+                .Width(300)
+                .HAlign(HorizontalAlignment.Left),
 
             AutoSuggestBox(
                 suggestions: Cities,
-                placeholderText: "不给 QueryIcon（就没有图标）"),
+                placeholderText: "不给 QueryIcon（就没有图标）")
+                .Width(300)
+                .HAlign(HorizontalAlignment.Left),
             TextBlock("默认那一档是官方的放大镜；这里显式给三种写法，"
                       + "是为了让「图标是内容槽、每帧都是新实例」这件事看得见——"
                       + "本库按<b>形状</b>比（同族 + 同一个 glyph / 符号），形状没变就不重建，"

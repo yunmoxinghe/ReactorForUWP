@@ -97,4 +97,47 @@ internal static class ReadyPolicy
     /// 变成"被 Arm 了多少次"——诊断读数一偏，人就被往错的方向带。
     /// </remarks>
     public static bool MarksReady(ReadyArmAction action) => action == ReadyArmAction.Already;
+
+    /// <summary>
+    /// 「这个控件算不算就绪」的判据。<b>纯函数，不依赖 WinRT</b>。
+    /// </summary>
+    /// <param name="marked">我们自己那份标记（<c>Loaded</c> 回调跑过才置上）。</param>
+    /// <param name="isLoaded">控件<b>此刻</b>的 <c>FrameworkElement.IsLoaded</c>。</param>
+    /// <param name="trustLive">要不要采信 <paramref name="isLoaded"/>（开关，默认开）。</param>
+    /// <remarks>
+    /// <b>为什么不能只看 <c>marked</c>。</b>那份标记唯一的写入者是 <c>Loaded</c>
+    /// 事件的回调；一旦那个事件<b>没来</b>，标记就永远是 false，而"未就绪"的语义是
+    /// "这期间的事件一发都不放行"——控件明明在树上、用户明明点得到，却一发都不响应。
+    /// <para>
+    /// <b><c>Loaded</c> 凭什么会不来。</b>不是猜的，有据：
+    /// </para>
+    /// <list type="bullet">
+    /// <item>Win2D#954 引 Win2D 自己的源码注释：<c>OnLoaded</c>/<c>OnUnloaded</c>
+    ///       由 XAML 异步派发，<b>可能乱序</b>；元素从树 A 移到树 B 时，树 B 的
+    ///       <c>Loaded</c> 可能先于树 A 的 <c>Unloaded</c> 到达。</item>
+    /// <item>XamlBehaviors#251：同一个 UI pass 内 remove 再 add 回树，XAML
+    ///       <b>只发 <c>Unloaded</c>、不发 <c>Loaded</c></b>——"在 Loaded 里订阅、
+    ///       在 Unloaded 里退订"的代码会<b>永久失去订阅，而对象还在正常参与 UI</b>。</item>
+    /// </list>
+    /// 折叠区展开、虚拟化回收、<c>Frame</c> 切页都会触发 remove→add 这种形状。
+    /// <para>
+    /// <b>为什么采信 <c>IsLoaded</c> 是安全的。</b>它答的是同一个问题：控件自己的
+    /// <c>Loaded</c> 抛出来时，它的模板子树（对 RadioButtons 来说就是那个内部
+    /// <c>ItemsRepeater</c>）已经就位，WinUI 自己也正是这一刻解禁
+    /// <c>m_blockSelecting</c>。所以"此刻在树上"必然蕴含"已经解禁"，
+    /// 不存在会被这条判据误放行的窗口。
+    /// </para>
+    /// <para>
+    /// <b>为什么是"或"而不是"取代"。</b><c>marked</c> 必须保留：控件离树之后
+    /// <c>IsLoaded</c> 会变回 false，而 <c>m_blockSelecting</c> 在 WinUI 那边一旦
+    /// 置 false 就不会再变回去（要等实例重建）。只看 <c>isLoaded</c> 会让"进过树、
+    /// 此刻暂时离树"的控件被重新判成未就绪。
+    /// </para>
+    /// <para>
+    /// <b>关掉开关（<c>trustLive=false</c>）必须 fail</b>：那就回到只看 <c>marked</c>
+    /// 的旧行为，而旧行为正是"点了没反应"的成因之一。
+    /// </para>
+    /// </remarks>
+    public static bool IsReady(bool marked, bool isLoaded, bool trustLive) =>
+        marked || (trustLive && isLoaded);
 }

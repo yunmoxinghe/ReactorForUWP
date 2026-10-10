@@ -37,8 +37,10 @@ public sealed class TextBoxOptions : Component
             TextBlock("多行").Caption().Subtle(),
             TextBox(
                     header: "AcceptsReturn + .Wrap()",
-                    placeholderText: "回车换行，长文本折行")
+                    placeholderText: "回车换行，长文本折行",
+                    acceptsReturn: true)
                 .Wrap()
+                .MinWidth(400)
                 .Height(80),
 
             TextBlock("只读（仍可选中复制）").Caption().Subtle(),

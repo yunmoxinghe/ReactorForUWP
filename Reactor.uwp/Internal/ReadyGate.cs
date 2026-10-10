@@ -117,10 +117,13 @@ internal static class ReadyGate
     {
         void Handler(object sender, RoutedEventArgs _)
         {
-            var fe = (T)sender;
-            Subs.Remove(fe);
-            fe.Loaded -= Handler;
-            Settle(fe, ReadyArmAction.Already);
+            // 摘表与解绑都用<b>订阅时那个引用</b>（<c>control</c>），不用回调给的
+            // <c>sender</c>：WinRT 不保证同一原生对象每次都给同一个托管包装，
+            // 用 sender 解绑会解不掉、用 sender 摘表会摘不掉（条目残留）。
+            // 依据见 RadioButtonsHandler.Handlers 字段的注释。
+            Subs.Remove(control);
+            control.Loaded -= Handler;
+            Settle(control, ReadyArmAction.Already);
         }
 
         Subs.Set(control, Handler);
@@ -149,9 +152,38 @@ internal static class ReadyGate
         callback?.Invoke(control);
     }
 
+    /// <summary>
+    /// 开关：判就绪时要不要采信控件<b>此刻</b>的 <c>IsLoaded</c>。<b>默认开。</b>
+    /// </summary>
+    /// <remarks>
+    /// <b>关掉它必须 fail</b>（alpha.6 的 fix discipline）：关掉就回到"只看我们自己
+    /// 那份标记"的旧行为，而那份标记<b>唯一的写入者是 <c>Loaded</c> 事件的回调</b>——
+    /// 事件不来，标记就永远是 false，于是"未就绪"期间的事件一发都不放行。
+    /// 判据与出处见 <see cref="ReadyPolicy.IsReady"/>。
+    /// </remarks>
+    public static bool TrustLiveIsLoaded { get; set; } = true;
+
     /// <summary>控件是否已经进过可视树（等价于 WinUI 那边 <c>m_blockSelecting == false</c>）。</summary>
-    public static bool IsReady(FrameworkElement control) =>
-        Ready.TryGetValue(control, out var ready) && ready;
+    public static bool IsReady(FrameworkElement control)
+    {
+        var marked = Ready.TryGetValue(control, out var ready) && ready;
+        var live = control.IsLoaded;
+
+        if (!marked && live && TrustLiveIsLoaded)
+        {
+            // 自我修复：标记没置上，但控件此刻确实在树上。
+            // 说明那个 Loaded 事件不会来了（UWP/WinUI 的 Loaded/Unloaded 有乱序与
+            // 不配对的已知问题，折叠区展开 / 虚拟化回收 / Frame 切页都会踩），
+            // 再干等下去就是把这位控件的所有事件永久吞掉。
+            // 补上标记而不是只记一笔：补了之后这一段代码不会再进（Healed 不会虚高），
+            // 而计数字段单独留着，好让"真机上到底发生过几次"成为可证伪的读数。
+            Ready.Set(control, true);
+            ReadyStats.Healed++;
+            marked = true;
+        }
+
+        return ReadyPolicy.IsReady(marked, live, TrustLiveIsLoaded);
+    }
 
     /// <summary>
     /// 卸载时收走登记。<c>WeakTable</c> 保证不调也不泄漏，调了只是更早释放。

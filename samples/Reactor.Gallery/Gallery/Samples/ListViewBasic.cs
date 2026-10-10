@@ -31,7 +31,8 @@ public sealed class ListViewBasic : Component
             ListView(
                 Optional<int>.Of(index),
                 setIndex,
-                ForEach(Names, name => TextBlock(name))),
+                ForEach(Names, name => TextBlock(name)))
+                .Size(350, 400),
             TextBlock(index < 0
                     ? "没有选中项"
                     : $"选中：{Names[index]}（第 {index} 项）")

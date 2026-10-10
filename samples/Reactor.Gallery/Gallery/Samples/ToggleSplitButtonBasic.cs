@@ -22,6 +22,12 @@ namespace Reactor.Gallery.Samples;
 /// 所以元素上那个 <c>bool?</c> 里的 <c>null</c> 落到 <c>false</c>，
 /// 而不是"保持原样"。
 /// </para>
+/// <para>
+/// <b>只有图标的那一档必须自己给 <c>AutomationName</c>。</b>官方样例的内容就是一个
+/// <c>SymbolIcon</c>（<c>List</c>），整个按钮没有文字可念——UIA 的名字回退只认
+/// "内容直接就是字符串"那一种，遇到一棵元素树取不到，官方那个 "Bullets" 的
+/// <c>AutomationProperties.Name</c> 就是为此手写的。
+/// </para>
 /// </remarks>
 public sealed class ToggleSplitButtonBasic : Component
 {
@@ -30,6 +36,7 @@ public sealed class ToggleSplitButtonBasic : Component
         var (bullets, setBullets) = UseState(false);
         var (style, setStyle) = UseState("圆点");
         var (clicks, setClicks) = UseState(0);
+        var (iconOnly, setIconOnly) = UseState(false);
 
         return VStack(14,
             TextBlock("受控 + 菜单").Body(),
@@ -46,6 +53,14 @@ public sealed class ToggleSplitButtonBasic : Component
                     MenuItem("取消符号", onClick: () => setBullets(false)))),
             TextBlock($"按下态：{(bullets ? "开" : "关")}；菜单里选的是：{style}；"
                       + $"左半边被点了 {clicks} 次").Caption().Subtle(),
+
+            TextBlock("纯图标内容（没有 Label）").Body(),
+            ToggleSplitButton(
+                    content: SymbolIcon(Windows.UI.Xaml.Controls.Symbol.List),
+                    isChecked: Optional<bool?>.Of(iconOnly),
+                    onIsCheckedChanged: setIconOnly)
+                .AutomationName("项目符号（纯图标）"),
+            TextBlock($"按下态：{(iconOnly ? "开" : "关")}").Caption().Subtle(),
 
             TextBlock("菜单里也能改按下态").Body(),
             TextBlock("最后那一项「取消符号」改的是 isChecked，不是 Click——"

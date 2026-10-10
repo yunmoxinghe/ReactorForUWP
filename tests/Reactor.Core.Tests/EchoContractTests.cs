@@ -4957,6 +4957,27 @@ internal static class EchoContractTests
     private static readonly Regex FlagOpen =
         new(@"(\w+)\.Set\(\s*[A-Za-z_]\w*\s*,\s*true\s*\)", RegexOptions.Compiled);
 
+    /// <summary>
+    /// 第十五道用：<b>窗式</b>标记——开了必须关在 <c>finally</c> 上。
+    /// </summary>
+    /// <remarks>
+    /// <b>2026-10：这里原本只写着 <c>Rebuilding</c> 一个名字。</b>
+    /// 加了 <c>Applying</c>（"我们自己在写 SelectedIndex"）之后，契约把它当成
+    /// "开了不关的单向标记"报了出来 —— 可它<b>是窗不是单向位</b>，
+    /// 按单向登记等于撒谎，按它本来的性质就得受"必须关在 finally"这条管。
+    /// <para>
+    /// 也就是说，这次不是源码错了，是<b>契约失聪了</b>：它把"窗"这个概念
+    /// 钉在了某一个变量名上。这正是这条契约自己写的那句
+    /// 「命中数骤降 = 这条契约正在悄悄失聪」的另一面——
+    /// <b>新窗以新名字出现时，它同样听不见。</b>
+    /// </para>
+    /// </remarks>
+    private static readonly HashSet<string> WindowFlags = new(StringComparer.Ordinal)
+    {
+        "Rebuilding",   // items 整批替换：期间的事件是 UpdateItemsSource 的副作用
+        "Applying",     // 我们自己在写 SelectedIndex：期间的事件是回声，不是用户拨的
+    };
+
     /// <summary>第十五道用：同一个标记被<b>关掉</b>（<c>X.Set(ctl, false)</c>）。</summary>
     private static readonly Regex FlagClose =
         new(@"(\w+)\.Set\(\s*[A-Za-z_]\w*\s*,\s*false\s*\)", RegexOptions.Compiled);
@@ -5046,8 +5067,8 @@ internal static class EchoContractTests
             {
                 var flag = FlagOpen.Match(f.Lines[i]);
 
-                // Rebuilding 走上面的判据；其余的必须登记为单向。
-                if (flag.Success && flag.Groups[1].Value != "Rebuilding")
+                // 窗式标记走上面的判据；其余的必须登记为单向。
+                if (flag.Success && !WindowFlags.Contains(flag.Groups[1].Value))
                 {
                     oneWay.Add((Relative(f.Path), flag.Groups[1].Value));
                 }
@@ -5136,7 +5157,7 @@ internal static class EchoContractTests
 
             var open = FlagOpen.Match(lines[i]);
 
-            if (!open.Success || open.Groups[1].Value != "Rebuilding")
+            if (!open.Success || !WindowFlags.Contains(open.Groups[1].Value))
             {
                 continue;
             }

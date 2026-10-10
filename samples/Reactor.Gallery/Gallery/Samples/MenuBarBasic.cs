@@ -1,5 +1,6 @@
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
+using Windows.System;
 using static Microsoft.UI.Reactor.Factories;
 
 namespace Reactor.Gallery.Samples;
@@ -23,8 +24,33 @@ public sealed class MenuBarBasic : Component
     public override Element Render()
     {
         var (last, setLast) = UseState("（还没点过）");
+        var (orientation, setOrientation) = UseState("横向");
+        var (iconSize, setIconSize) = UseState("中");
 
         void Report(string what) => setLast(what);
+
+        // 单选那两组共用一个收口：被取消的那一条也会来回调（false），只认选中的。
+        void PickOrientation(bool picked, string name)
+        {
+            if (!picked)
+            {
+                return;
+            }
+
+            setOrientation(name);
+            Report($"视图 › 方向 {name}");
+        }
+
+        void PickIconSize(bool picked, string name)
+        {
+            if (!picked)
+            {
+                return;
+            }
+
+            setIconSize(name);
+            Report($"视图 › 图标 {name}");
+        }
 
         return VStack(12,
             TextBlock("菜单栏").Body(),
@@ -53,7 +79,27 @@ public sealed class MenuBarBasic : Component
                     MenuItem("放大", FontIcon("\uE8A3"), () => Report("视图 › 放大")),
                     MenuItem("缩小", FontIcon("\uE8A3"), () => Report("视图 › 缩小")),
                     MenuSeparator(),
-                    MenuItem("全屏", FontIcon("\uE740"), () => Report("视图 › 全屏")))),
+                    RadioMenuItem("横向", isChecked: orientation == "横向", groupName: "orientation",
+                        onIsCheckedChanged: v => PickOrientation(v, "横向")),
+                    RadioMenuItem("纵向", isChecked: orientation == "纵向", groupName: "orientation",
+                        onIsCheckedChanged: v => PickOrientation(v, "纵向")),
+                    MenuSeparator(),
+                    RadioMenuItem("小图标", isChecked: iconSize == "小", groupName: "iconSize",
+                        onIsCheckedChanged: v => PickIconSize(v, "小")),
+                    RadioMenuItem("中图标", isChecked: iconSize == "中", groupName: "iconSize",
+                        onIsCheckedChanged: v => PickIconSize(v, "中")),
+                    RadioMenuItem("大图标", isChecked: iconSize == "大", groupName: "iconSize",
+                        onIsCheckedChanged: v => PickIconSize(v, "大")),
+                    MenuSeparator(),
+                    MenuItem("全屏", FontIcon("\uE740"), () => Report("视图 › 全屏"))))
+
+                // AcceleratorText 只是一行字；真正把键挂上去要用 KeyboardAccelerator。
+                // 快捷键挂在菜单栏这一层（菜单项不在可视树里，挂上去不会被应用），
+                // 焦点落在菜单栏上时 Ctrl+N / Ctrl+S 会真的触发。
+                .KeyboardAccelerator(VirtualKey.N, VirtualKeyModifiers.Control,
+                    () => Report("快捷键 Ctrl+N → 新建"))
+                .KeyboardAccelerator(VirtualKey.S, VirtualKeyModifiers.Control,
+                    () => Report("快捷键 Ctrl+S → 保存")),
 
             TextBlock($"最后一次动作：{last}").Caption().Subtle(),
 

@@ -36,6 +36,20 @@ internal interface IElementHandler
     /// <summary>单子元素容器（Border / ScrollViewer / NavigationView）的唯一子元素。</summary>
     Element? SingleChildOf(Element element);
 
+    /// <summary>
+    /// 主槽之外还挂着子内容的那些槽（<b>按控件实例</b>报，而非按类型）。
+    /// </summary>
+    /// <remarks>
+    /// <see cref="SingleChildOf"/> 只能表达"一个"子槽，而像 <c>SplitView</c>（Pane +
+    /// Content）这样的容器有两个。<c>Pane</c> 不在 <c>SingleChildAccessor</c> 的
+    /// 主槽上、也走不了 <c>PatchSingleChild</c>，但它同样是这棵树的一部分：
+    /// <b>丢弃整棵子树时必须一起递归进去</b>。
+    /// 之所以要 handler 来报而不是那张静态表：<c>UIElement</c> 与 <c>Element</c>
+    /// 的配对只有 handler 手里有（存在它自己的槽位表里），协调器拿到<b>元素</b>
+    /// 才能继续往下递归，光有一个 native 控件是不够的。
+    /// </remarks>
+    IReadOnlyList<(UIElement Native, Element? Element)> ExtraSlotsOf(UIElement control);
+
     /// <summary>子元素应当挂到哪个 Panel 上（ScrollViewer/Border 这类单子元素容器返回 null）。</summary>
     Panel? PanelOf(UIElement control);
 
@@ -68,6 +82,10 @@ internal abstract class ElementHandler<TElement, TControl> : IElementHandler
     protected virtual IReadOnlyList<Element?>? ChildrenOf(TElement element) => null;
 
     protected virtual Element? SingleChildOf(TElement element) => null;
+
+    /// <summary>默认没有额外槽：只有多槽容器（见 <c>SplitView</c>）才 override。</summary>
+    protected virtual IReadOnlyList<(UIElement Native, Element? Element)> ExtraSlotsOf(TControl control) =>
+        Array.Empty<(UIElement, Element?)>();
 
     protected virtual Panel? PanelOf(TControl control) => null;
 
@@ -112,38 +130,84 @@ internal abstract class ElementHandler<TElement, TControl> : IElementHandler
     Element? IElementHandler.SingleChildOf(Element element) =>
         element is TElement typed ? SingleChildOf(typed) : null;
 
+    IReadOnlyList<(UIElement Native, Element? Element)> IElementHandler.ExtraSlotsOf(UIElement control) =>
+        control is TControl typed ? ExtraSlotsOf(typed) : Array.Empty<(UIElement, Element?)>();
+
     Panel? IElementHandler.PanelOf(UIElement control) =>
         control is TControl typed ? PanelOf(typed) : null;
 }
 
 /// <summary>
-/// 单子元素容器的"读写单个子内容"访问器注册表。
+/// 单子元素容器的"读写单个子内容"访问器注册表——<b>外加卸载侧额外槽</b>。
 /// </summary>
 /// <remarks>
-/// <see cref="Reconciler.PatchSingleChild"/> 默认只认识 <c>ContentControl</c> 与
-/// <c>Border</c>。第三方容器（如 Toolkit 的 SettingsExpander——它不继承
-/// ContentControl，但有 <c>Content</c>）必须在这里登记，否则每轮重渲染都会
-/// 走"卸载 + 整棵子树重建"的兜底分支：能跑，但状态丢失、性能差、日志刷屏。
-/// 无反射、按具体类型查表，AOT 友好。
+/// <para>
+/// 原生 XAML 里"子内容放在哪"这件事没有统一接口：<c>ContentControl</c> 放在
+/// <c>Content</c>、<c>Border</c> 放在 <c>Child</c>、第三方容器（如 Toolkit 的
+/// <c>SettingsExpander</c>——它不继承 ContentControl，但也有 <c>Content</c>）
+/// 各放各的。协调器因此按具体类型查表；无反射、AOT 友好。
+/// </para>
+/// <para>
+/// <b>这一层现在是唯一答案。</b><see cref="TryGetSlot"/> 把
+/// "ContentControl → Border → 登记表"这个三级顺序收在一处，patch 路径
+/// （<see cref="Reconciler.PatchSingleChild"/>）与卸载路径
+/// （<see cref="Reconciler.UnmountTree"/>）都必须问它、也只能问它。
+/// </para>
+/// <para>
+/// 在这之前两条路径各写了一份：patch 侧是三级、卸载侧只有前两级
+/// （漏了登记表）——于是通过登记表接入的容器（<c>Viewbox</c>、<c>ParallaxView</c>、
+/// <c>SettingsExpander</c>、<c>Popup</c>、<c>SplitView</c>）在<b>整棵子树被丢弃</b>
+/// 的那条路上，槽内子树一个都不会被递归卸载：里面的 <c>ComponentNode</c>
+/// 永远留在注册表、<c>IsMounted</c> 仍为 true，继续响应状态更新、去 patch 一棵
+/// 已经离开可视树的树。症状就是"反复切页内存一直涨"。
+/// 判据漂移这类 bug 静态看着没异样，<b>只有把它收汇到一处才能根治</b>——
+/// 补一处是不够的，明天另一条路径分叉出去还会再出一次。
+/// </para>
 /// </remarks>
 internal static class SingleChildAccessor
 {
-    private static readonly Dictionary<Type, Func<object, (Func<UIElement?> Getter, Action<UIElement?> Setter)>>
-        Accessors = new();
+    private sealed class Entry
+    {
+        /// <summary>主槽：能就地 patch 的那个（读写都要）。</summary>
+        public required Func<object, (Func<UIElement?> Getter, Action<UIElement?> Setter)> Primary { get; init; }
+    }
 
+    private static readonly Dictionary<Type, Entry> Accessors = new();
+
+    /// <summary>登记一个第三方容器的子内容槽（多出来的槽走 handler 的 <c>ExtraSlotsOf</c>）。</summary>
     public static void Register<TNative>(
-        Func<TNative, (Func<UIElement?> Getter, Action<UIElement?> Setter)> factory)
+        Func<TNative, (Func<UIElement?> Getter, Action<UIElement?> Setter)> primary)
         where TNative : class =>
-        Accessors[typeof(TNative)] = container => factory((TNative)container);
+        Accessors[typeof(TNative)] = new Entry
+        {
+            Primary = container => primary((TNative)container),
+        };
 
-    public static bool TryGet(
-        object container,
+    /// <summary>
+    /// 「这个容器的子内容槽在哪」的<b>唯一答案</b>：patch 与卸载两条路都走这里。
+    /// </summary>
+    public static bool TryGetSlot(
+        UIElement container,
         out Func<UIElement?> getter,
         out Action<UIElement?> setter)
     {
-        if (Accessors.TryGetValue(container.GetType(), out var factory))
+        if (container is ContentControl contentControl)
         {
-            (getter, setter) = factory(container);
+            getter = () => contentControl.Content as UIElement;
+            setter = value => contentControl.Content = value;
+            return true;
+        }
+
+        if (container is Border border)
+        {
+            getter = () => border.Child;
+            setter = value => border.Child = value;
+            return true;
+        }
+
+        if (Accessors.TryGetValue(container.GetType(), out var entry))
+        {
+            (getter, setter) = entry.Primary(container);
             return true;
         }
 
@@ -282,6 +346,10 @@ internal static class ElementHandlerRegistry
         Register<TeachingTipElement, TeachingTipHandler>();
         Register<TwoPaneViewElement, TwoPaneViewHandler>();
 
+        // 浮层容器（UWP 原生 Popup）：受控 IsOpen，Opened / Closed 合成一个出口。
+        // 它是 FrameworkElement + Child，所以两侧各要一条自己的路径（见该类注释）。
+        Register<PopupElement, PopupHandler>();
+
         // 取值与富文本补完：受控 Color 的取色器、文本住在 Document 里的富文本编辑框
         Register<ColorPickerElement, ColorPickerHandler>();
         Register<RichEditBoxElement, RichEditBoxHandler>();
@@ -309,6 +377,13 @@ internal static class ElementHandlerRegistry
 
         // SplitView 也是单子元素容器（继承 Control，不是 ContentControl），
         // 不登记的话它的 Content 每轮都走"卸载 + 整棵子树重建"那条兜底分支。
+        //
+        // Pane 是第二个槽：它不在主槽上（因此走不了 PatchSingleChild 那条通用路径，
+        // 由 handler 自己的 ApplyPane 处理），但<b>卸载时必须一起递归进去</b>——
+        // 以前这件事是 SplitViewHandler.Unmount 手写的，现在改由 handler 通过
+        // <c>ExtraSlotsOf</c> 报出来，与 UnmountTree 的通用遍历接上。
+        // 注意配对（哪个 native 对应哪个 Element）只有 handler 知道，
+        // 所以额外槽<b>不</b>登记在这张静态表里——那表只回答"内容放在哪个属性"。
         SingleChildAccessor.Register<Windows.UI.Xaml.Controls.SplitView>(control => (
             () => control.Content as UIElement,
             value => control.Content = value!));
@@ -321,6 +396,13 @@ internal static class ElementHandlerRegistry
 
         // ParallaxView 同理（WinUI 2 的 FrameworkElement，子内容在 Child 上）。
         SingleChildAccessor.Register<Microsoft.UI.Xaml.Controls.ParallaxView>(control => (
+            () => control.Child,
+            value => control.Child = value));
+
+        // Popup 同理（UWP 原生 FrameworkElement，子内容在 Child 上）：
+        // 这一条只为 patch 服务——卸载那条路走的是 PopupHandler.Unmount
+        // （UnmountTree 的单槽分支不查本表，见该类注释）。
+        SingleChildAccessor.Register<Windows.UI.Xaml.Controls.Primitives.Popup>(control => (
             () => control.Child,
             value => control.Child = value));
     }

@@ -29,7 +29,7 @@ public sealed class ScrollViewerBasic : Component
 {
     private static readonly string[] Lines =
     {
-        "第一行：这块区域被限高到 160，内容比它高，于是出现了滚动。",
+        "第一行：这块区域被限高到 266，内容比它高，于是出现了滚动。",
         "第二行：ScrollViewer 只有一个子槽位，这里先把二十行装进 VStack 再塞进来。",
         "第三行：两条轴各有 ScrollBarVisibility（滚动条显不显示）与 ScrollMode（能不能滚）。",
         "第四行：默认横向是 Disabled——不是不能滚，是滚动条不出现。",
@@ -55,7 +55,7 @@ public sealed class ScrollViewerBasic : Component
                     child: VStack(6, Lines.Select(line => TextBlock(line).Wrap()).ToArray()),
                     horizontalScrollBar: bars ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled,
                     verticalScrollBar: ScrollBarVisibility.Auto)
-                .Height(160)
+                .Size(400, 266)
                 .WithBorder(ThemeResource.Brush("CardStrokeColorDefaultBrush")),
 
             TextBlock("注意：把横向滚动条设成 Disabled，横向仍然能滚——"
@@ -65,8 +65,10 @@ public sealed class ScrollViewerBasic : Component
                 .Wrap(),
 
             TextBlock("缩放（ZoomMode）").Caption().Subtle(),
+            // 缩放演示要用一张真的比视口大的图——应用 logo 150×150 放在这儿
+            // 太小，放大缩小都看不出名堂；本地生成的高图 240×720 才演得起来。
             ScrollViewer(
-                    child: Image("ms-appx:///Assets/Square150x150Logo.scale-100.png"),
+                    child: Image("ms-appx:///Assets/SampleMedia/tall-cliff.png"),
                     horizontalScrollBar: ScrollBarVisibility.Auto,
                     verticalScrollBar: ScrollBarVisibility.Auto,
                     zoom: ZoomMode.Enabled)

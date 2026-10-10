@@ -34,6 +34,10 @@ public sealed partial class App : ReactorApplication<MainPage>
     {
         ElementSound.Apply(AppSettings.Current.Sound);
 
+        // ── 原子探针在 MainPage 挂载后才挂（见 MainPage 里的那处 UseEffect）──
+        // 这里不挂是因为 OnLaunched 阶段拿不到派发器，挂了等于没挂。
+        // 它认 LocalState\atom-off.txt，与下面 log-off 那条 A/B 各走各的开关。
+
         // ── A/B 开关：LocalState\log-off.txt 存在就全关日志 ──────────────
         //
         // 用来验证一个具体假设：日志的落盘本身在改变时序，于是"有日志就正常、
@@ -48,6 +52,17 @@ public sealed partial class App : ReactorApplication<MainPage>
         //
         // 判据：关掉日志后如果重现"点了没反应"，假设成立；
         // 如果照样能点，就得回到"未就绪窗口"之外去找原因。
+        // ── 闸门留痕：只给 Input 通道开 Trace ──────────────────────────
+        //
+        // 通道级门槛<b>优先于</b>全局（<c>Effective</c> 先看 ChannelLevels 再看
+        // 全局值），所以下面那条 log-off 把全局设成 Off 也挡不住它 —— 那条 A/B
+        // 要验的东西因此保持单变量，不会因为"开了日志"而变成双变量。
+        //
+        // 它也不引入新的时序干扰：Write 只在 Info 及以上才 Persist，而 Gate 是
+        // Trace 级，<b>只进内存 Ring</b>，不会新增"每条日志同步 Append 一次文件"
+        // 那个已知干扰源。留痕由 Heartbeat 周期读 Ring 转出，同样只在变化时写盘。
+        ReactorLog.SetChannel(ReactorLogChannel.Input, ReactorLogLevel.Trace);
+
         var quiet = System.IO.File.Exists(System.IO.Path.Combine(
             Windows.Storage.ApplicationData.Current.LocalFolder.Path, "log-off.txt"));
 
@@ -55,18 +70,6 @@ public sealed partial class App : ReactorApplication<MainPage>
         {
             // Off 让 IsEnabled 对一切级别都返回 false：不进 Ring、不落盘。
             ReactorLog.Level = ReactorLogLevel.Off;
-        }
-        else
-        {
-            // 把框架日志提到 Trace，并起一个定时器把内存缓冲按通道转储到
-            // probe-live.log：否则"闸门为什么吞掉这一发"那一行根本落不了盘
-            // （它是 Trace 级，框架只在 Info 及以上写文件）——排查"点了没反应"
-            // 时等于没有证据。放在建树之前：首帧的挂载/下发也要记进来。
-            Probe.StartDump();
-
-            // 自检：让应用自己在真实控件上点一遍，报告落在 selftest.log。
-            // 放在建树之后——它要等控件 Loaded 才动手，而那要先有树。
-            Probe.StartSelfTest();
         }
 
         base.OnLaunched(args);

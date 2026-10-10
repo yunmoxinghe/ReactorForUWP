@@ -47,17 +47,19 @@ internal static class GalleryIndexTests
     /// <summary>官方类型全名（<c>Windows.UI.*</c> / <c>Microsoft.UI.*</c>）。</summary>
     private static readonly Regex ApiType = new(@"""(Windows|Microsoft)\.UI\.[^""]+""", RegexOptions.Compiled);
 
-    /// <summary>文档链接走前缀常量：<c>Uwp + "textblock"</c> / <c>Mux + "infobar"</c>。</summary>
     /// <summary>
     /// 文档链接走前缀常量：<c>Uwp + "textblock"</c> / <c>Mux + "infobar"</c>
-    /// / <c>Shapes + "shape"</c>。
+    /// / <c>Shapes + "shape"</c> / <c>Media + "acrylicbrush"</c>
+    /// / <c>MuxMedia + "radialgradientbrush"</c>。
     /// </summary>
     /// <remarks>
-    /// <c>Shapes</c> 是第三个前缀：形状住在 <c>Windows.UI.Xaml.Shapes</c> 命名空间，
-    /// 套 <c>controls.</c> 前缀会拼出一条不存在的 URL——与其为它开一个手写链接的
-    /// 口子，不如多认一个前缀常量，这条契约照旧管得住它。
+    /// <c>Shapes</c> / <c>Media</c> / <c>MuxMedia</c> 是后加的三个前缀：形状住在
+    /// <c>Windows.UI.Xaml.Shapes</c>、UWP 画笔住在 <c>Windows.UI.Xaml.Media</c>、
+    /// WinUI 画笔住在 <c>Microsoft.UI.Xaml.Media</c>，
+    /// 套 <c>controls.</c> 前缀会拼出一条不存在的 URL——与其为它们开一个手写链接的
+    /// 口子，不如多认一个前缀常量，这条契约照旧管得住它们。
     /// </remarks>
-    private static readonly Regex DocRef = new(@"\b(Uwp|Mux|Shapes) \+ """, RegexOptions.Compiled);
+    private static readonly Regex DocRef = new(@"\b(Uwp|Mux|Shapes|Media|MuxMedia) \+ """, RegexOptions.Compiled);
 
     public static void Run()
     {
@@ -185,7 +187,7 @@ internal static class GalleryIndexTests
         // 这里把它钉回索引：表里每一个 id 都必须真有那么一个条目。
         //
         // 另外两条守"每行的形状"：至少写一个官方类型名（否则那张卡是空的），
-        // 文档链接必须走文件顶部那两个前缀常量（否则会有人手写一条裸 URL，
+        // 文档链接必须走文件顶部那几个前缀常量（否则会有人手写一条裸 URL，
         // 而"WinUI 2 的文档已并入 WinUI 3 文档站"这个约定就管不住它了）。
         var apiPath = Path.Combine(gallery, "Gallery", "ApiMap.cs");
 
@@ -237,7 +239,7 @@ internal static class GalleryIndexTests
             empty.Count == 0 ? null : string.Join(", ", empty));
 
         Program.Check(
-            "官方对应表的文档链接都走那两个前缀常量",
+            "官方对应表的文档链接都走那几个前缀常量",
             rawUrl.Count == 0,
             rawUrl.Count == 0 ? null : string.Join(", ", rawUrl));
     }

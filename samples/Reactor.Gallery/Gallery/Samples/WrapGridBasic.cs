@@ -42,23 +42,26 @@ public sealed class WrapGridBasic : Component
     public override Element Render()
     {
         var (vertical, setVertical) = UseState(false);
-        var (max, setMax) = UseState(4);
+        var (max, setMax) = UseState(3);
 
         return VStack(12,
             HStack(8,
                 Button(vertical ? "改成 Horizontal" : "改成 Vertical", () => setVertical(!vertical)),
-                Button(max == 4 ? "最多 3 格" : "最多 4 格", () => setMax(max == 4 ? 3 : 4)),
+                Button(max == 3 ? "最多 6 格" : "最多 3 格", () => setMax(max == 3 ? 6 : 3)),
                 TextBlock($"Orientation = {(vertical ? "Vertical" : "Horizontal")}；"
                           + $"MaximumRowsOrColumns = {max}")
                     .Caption().Subtle().VAlign(VerticalAlignment.Center)),
 
             WrapGrid(
-                    itemWidth: 72,
-                    itemHeight: 72,
+                    itemWidth: 44,
+                    itemHeight: 44,
                     maximumRowsOrColumns: max,
                     orientation: vertical ? Orientation.Vertical : Orientation.Horizontal,
                     children: Cells.Select(cell => Block(cell).WrapSpan(cell.RowSpan, cell.ColumnSpan))
                         .ToArray())
+                // 官方给的是固定容器宽度：不写死它就会一路撑满父容器，
+                // 「最多 3 格」这件事在宽容器里根本看不出来。
+                .Width(400)
                 .WithBorder(ThemeResource.Brush("CardStrokeColorDefaultBrush")),
 
             TextBlock("跨格的块会把后面的块挤到下一处空位——官方不会重排已放下的项，"

@@ -51,6 +51,9 @@ internal sealed class PivotHandler : ElementHandler<PivotElement, WuControls.Piv
     /// <summary>枢轴 → 最近一次下发的各页内容描述（卸载时逐页递归用）。</summary>
     private static readonly WeakTable<WuControls.Pivot, Element?[]> Contents = new();
 
+    /// <summary>挂在控件上的 <c>SelectionChanged</c> 委托（Unmount 要拿它解绑）。语义与 <c>RadioButtonsHandler.Handlers</c> 一致，详见那边的注释。</summary>
+    private static readonly WeakTable<WuControls.Pivot, WuControls.SelectionChangedEventHandler?> Handlers = new();
+
     protected override WuControls.Pivot Mount(Reconciler reconciler, PivotElement element)
     {
         var pivot = new WuControls.Pivot
@@ -97,6 +100,13 @@ internal sealed class PivotHandler : ElementHandler<PivotElement, WuControls.Piv
     {
         SelectionEcho.Forget(pivot);
         ReadyGate.Disarm(pivot);
+
+        if (Handlers.TryGetValue(pivot, out var handler) && handler is { } attached)
+        {
+            pivot.SelectionChanged -= attached;
+            Handlers.Remove(pivot);
+        }
+
         Callbacks.Remove(pivot);
         Targets.Remove(pivot);
         Rebuilding.Remove(pivot);
@@ -315,18 +325,22 @@ internal sealed class PivotHandler : ElementHandler<PivotElement, WuControls.Piv
 
     private static void Rebind(WuControls.Pivot pivot, Action<int>? selection)
     {
-        if (!Callbacks.ContainsKey(pivot))
+        if (!Handlers.ContainsKey(pivot))
         {
-            pivot.SelectionChanged += (s, args) =>
+            WuControls.SelectionChangedEventHandler handler = (s, args) =>
             {
-                var self = (WuControls.Pivot)s;
-                if (Callbacks.TryGetValue(self, out var current))
+                // 用订阅时那个引用（<c>pivot</c>）查表，不用 <c>sender</c>。
+                // 理由见 RadioButtonsHandler.Handlers 字段的注释。
+                if (Callbacks.TryGetValue(pivot, out var current))
                 {
                     // 不管这一轮有没有人监听，四道判据与纠正都要跑：
                     // 它们兑现的是"受控"，不是"送达"。
-                    Dispatch(self, args, current);
+                    Dispatch(pivot, args, current);
                 }
             };
+
+            pivot.SelectionChanged += handler;
+            Handlers.Set(pivot, handler);
         }
 
         Callbacks[pivot] = selection;

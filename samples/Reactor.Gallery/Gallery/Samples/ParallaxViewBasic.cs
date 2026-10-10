@@ -1,6 +1,8 @@
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
+using Windows.UI;
 using Windows.UI.Xaml;
+using Windows.UI.Xaml.Media;
 using MuxControls = Microsoft.UI.Xaml.Controls;
 using static Microsoft.UI.Reactor.Factories;
 
@@ -52,9 +54,16 @@ public sealed class ParallaxViewBasic : Component
 
     private static readonly string[] Kinds = { "Absolute（整段全程）", "Relative（每滚一屏）" };
 
+    /// <summary>
+    /// Header 那行白字压在一层半透明黑上（官方列表背景 <c>#80000000</c> 那一档）：
+    /// 不垫这一层，白字在浅色主题下等于没写。
+    /// </summary>
+    private static readonly Brush HeaderBackdrop =
+        new SolidColorBrush(Color.FromArgb(0x80, 0, 0, 0));
+
     public override Element Render()
     {
-        var (shift, setShift) = UseState(120.0);
+        var (shift, setShift) = UseState(500.0);
         var (kindIndex, setKindIndex) = UseState(0);
 
         var kind = kindIndex == 1
@@ -84,8 +93,20 @@ public sealed class ParallaxViewBasic : Component
 
                     // 第 1 个：滚动区（在前面，也是视差参照的源头）
                     ScrollViewer(
-                            VStack(8, ForEach(Lines, (line, _) =>
-                                TextBlock(line).Body().Wrap())))
+                            VStack(8,
+                                // 官方把这段白字放在 ListView.Header 里，跟着内容一起滚。
+                                Border(
+                                        TextBlock("滚动这段内容，看后面那层怎么错开")
+                                            .MaxWidth(280)
+                                            .FontSize(28)
+                                            .Foreground(Colors.White)
+                                            .Wrap()
+                                            .HAlign(HorizontalAlignment.Center))
+                                    .Background(HeaderBackdrop)
+                                    .Padding(12, 8)
+                                    .HAlign(HorizontalAlignment.Center),
+                                ForEach(Lines, (line, _) =>
+                                    TextBlock(line).Body().Wrap())))
                         .Padding(20, 12)
                         .Height(320))
                 .WithBorder(ThemeResource.Brush("CardStrokeColorDefaultBrush")),
@@ -96,7 +117,7 @@ public sealed class ParallaxViewBasic : Component
                     Slider(
                         value: shift,
                         min: 0,
-                        max: 240,
+                        max: 500,
                         onValueChanged: value => setShift(value)))
                     .Width(240),
 

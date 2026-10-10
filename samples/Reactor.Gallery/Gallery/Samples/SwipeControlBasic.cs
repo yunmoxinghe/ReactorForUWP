@@ -101,5 +101,10 @@ public sealed class SwipeControlBasic : Component
                             setRows(next);
                             setLog($"删掉了「{name}」");
                         })))
+            // 官方那一行是 500×68、外圈 12：不写死尺寸它会按内容缩，
+            // 「一整行」的手感就没了（滑动手势认的是这一行的宽度）。
+            .Width(500)
+            .Height(68)
+            .Margin(12)
             .WithBorder(ThemeResource.Brush("CardStrokeColorDefaultBrush"));
 }

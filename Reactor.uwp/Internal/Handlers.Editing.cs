@@ -186,7 +186,14 @@ internal sealed class ColorPickerHandler : ElementHandler<ColorPickerElement, Mu
 /// （那一刻订阅还没挂上，写了也没人听见），之后 <c>Update</c> 只换回调与配置，
 /// 文本一律只出不进。
 /// </para>
+/// <para>
+/// 下面这行是给静态检查看的：<c>InitialText</c> 只在 <c>Mount</c> 里被读，
+/// <c>PropertyDriftTests</c> 认这个登记才会放过；让它合法的理由写在上面那段里——
+/// 文本一旦能回头写，受控就得建在"剥掉末尾 <c>\r</c>"这条只有本框架知道的
+/// 归一化上，而控件并不认这份约定。
+/// </para>
 /// </remarks>
+// MOUNT-ONLY: InitialText
 internal sealed class RichEditBoxHandler : ElementHandler<RichEditBoxElement, RichEditBox>
 {
     private static readonly WeakTable<RichEditBox, RoutedEventHandler> Handlers = new();

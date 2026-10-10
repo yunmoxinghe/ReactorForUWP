@@ -33,6 +33,8 @@ internal static class Program
         RenderBatcherTests.Run();
         ReorderTests.Run();
         SelectionGateTests.Run();
+        DoubleCallbackTests.Run();
+        DetachedContractTests.Run();
         ListViewSelectionTests.Run();
         ToggleEchoTests.Run();
         BreadcrumbItemsTests.Run();
@@ -42,6 +44,8 @@ internal static class Program
         SiblingWriteTests.Run();
         RebuildEchoTests.Run();
         EchoContractTests.Run();
+        SingleSlotTests.Run();
+        PropertyDriftTests.Run();
         GalleryIndexTests.Run();
 
         Console.WriteLine();

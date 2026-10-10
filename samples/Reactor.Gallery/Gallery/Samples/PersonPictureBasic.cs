@@ -21,8 +21,8 @@ namespace Reactor.Gallery.Samples;
 /// </remarks>
 public sealed class PersonPictureBasic : Component
 {
-    /// <summary>与 <c>ImageBasic</c> / <c>IconsBasic</c> 同一张包内资源。</summary>
-    private const string Source = "ms-appx:///Assets/Square150x150Logo.scale-100.png";
+    /// <summary>生成的头像替代图（avatar.png，透明背景，见 tools/parity/make_sample_media.py）。</summary>
+    private const string Source = "ms-appx:///Assets/SampleMedia/avatar.png";
 
     public override Element Render()
     {

@@ -1,0 +1,51 @@
+{
+  "found": {
+    "AnimatedIcon": [
+      "Microsoft.UI.Xaml.Controls"
+    ],
+    "AnimatedVisualPlayer": [
+      "Microsoft.UI.Xaml.Controls"
+    ],
+    "InkCanvas": [
+      "Windows.UI.Xaml.Controls"
+    ],
+    "LayoutPanel": [
+      "Microsoft.UI.Xaml.Controls"
+    ],
+    "MapControl": [
+      "Windows.UI.Xaml.Controls.Maps"
+    ],
+    "MediaPlayerElement": [
+      "Windows.UI.Xaml.Controls"
+    ],
+    "PagerControl": [
+      "Microsoft.UI.Xaml.Controls"
+    ],
+    "ScrollView": [
+      "Microsoft.UI.Xaml.Controls"
+    ],
+    "ThemeShadow": [
+      "Windows.UI.Xaml.Media"
+    ],
+    "WebView2": [
+      "Microsoft.UI.Xaml.Controls"
+    ]
+  },
+  "missing": [
+    "AnnotatedScrollBar",
+    "AppNotification",
+    "AppWindow",
+    "AppWindowTitleBar",
+    "BadgeNotificationManager",
+    "ContentIsland",
+    "ItemsView",
+    "JumpList",
+    "SelectorBar",
+    "StandardUICommand",
+    "SystemBackdropElement",
+    "TableView",
+    "TitleBar",
+    "WrapPanel",
+    "XamlUICommand"
+  ]
+}

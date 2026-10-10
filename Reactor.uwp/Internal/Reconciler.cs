@@ -239,21 +239,10 @@ internal sealed class Reconciler
         Func<UIElement?> getter;
         Action<UIElement?> setter;
 
-        if (container is ContentControl contentControl)
-        {
-            getter = () => contentControl.Content as UIElement;
-            setter = value => contentControl.Content = value;
-        }
-        else if (container is Border border)
-        {
-            getter = () => border.Child;
-            setter = value => border.Child = value;
-        }
-        else if (SingleChildAccessor.TryGet(container, out getter, out setter))
-        {
-            // 第三方容器（Toolkit SettingsExpander 等）自己登记的访问器，见该类的注释。
-        }
-        else
+        // 「这个容器的子内容放在哪」只有一个答案，见 SingleChildAccessor 的类注释：
+        // patch 与卸载曾经各写一份、卸载那份少了一级，代价是登记进来的容器在
+        // 整棵子树被丢弃时槽里的组件一个都不回收。这里不再重复那张三级表。
+        if (!SingleChildAccessor.TryGetSlot(container, out getter, out setter))
         {
             // 未知容器类型：静默 return 会让"整棵子树永远不更新"这类问题极难发现，
             // 这里显式留痕。
@@ -921,6 +910,9 @@ internal sealed class Reconciler
     /// <see cref="ComponentNode"/> 会一直留在注册表里、IsMounted 仍为 true，
     /// 于是这些已经被移出视觉树的组件还会响应状态更新、继续 patch 一棵游离的树。
     /// </remarks>
+    private static readonly IReadOnlyList<(UIElement Native, Element? Element)> EmptySlots =
+        Array.Empty<(UIElement, Element?)>();
+
     private void UnmountTree(UIElement native, Element? element)
     {
         if (native is Border wrapper && _componentNodes.TryGetValue(wrapper, out var node))
@@ -957,20 +949,24 @@ internal sealed class Reconciler
             return;
         }
 
+        // 「这个容器的子内容放在哪」只有一个答案：见 SingleChildAccessor 的类注释。
+        // 早先这里写的是只有 ContentControl / Border 两级的 switch，漏了登记表那一
+        // 级——于是从登记表接入的容器（Viewbox / ParallaxView / SettingsExpander /
+        // Popup / SplitView）在丢弃整棵子树时，槽里的子树一个都不回收。
         var singleChild = handler?.SingleChildOf(element);
-        if (singleChild is not null)
+        if (singleChild is not null
+            && SingleChildAccessor.TryGetSlot(native, out var slotGetter, out _)
+            && slotGetter() is { } slotContent)
         {
-            var content = native switch
-            {
-                ContentControl contentControl => contentControl.Content as UIElement,
-                Border border => border.Child,
-                _ => null,
-            };
+            UnmountTree(slotContent, singleChild);
+        }
 
-            if (content is not null)
-            {
-                UnmountTree(content, singleChild);
-            }
+        // 多出来的槽（SplitView 的 Pane 等）：不在主槽上、也不走 patch 那条通用路径，
+        // 但同属这棵子树 —— 丢弃时必须一起递归，否则里面的组件照样留在注册表里。
+        // handler 一并给出了 native↔element 的配对，所以这里能继续往下走。
+        foreach (var (extraNative, extraElement) in handler?.ExtraSlotsOf(native) ?? EmptySlots)
+        {
+            UnmountTree(extraNative, extraElement ?? EmptyElement.Instance);
         }
     }
 
@@ -1049,7 +1045,7 @@ internal sealed class Reconciler
                 return;
             }
 
-            onChanged(((TextBox)s).Text);
+            onChanged(textBox.Text);
         };
 
         textBox.TextChanged += handler;

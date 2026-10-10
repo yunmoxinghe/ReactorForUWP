@@ -16,6 +16,11 @@ namespace Reactor.Gallery.Samples;
 /// 图标那一格还有个 <c>IsIconVisible</c>：关掉它只是<b>不画那个图标</b>，
 /// 文字不会因此往左顶——图标那一列是模板里的固定槽位，隐藏的是内容不是格子。
 /// </para>
+/// <para>
+/// <b><c>IsOpen</c> 是种子值，不是受控值。</b>它只在挂载那一刻写一次，之后归控件
+/// 自己：用户点了 ×，<c>IsOpen</c> 变 <c>false</c>，下一轮重渲染<b>不会</b>把它
+/// 重新打开——那不是状态同步，那是把用户的操作撤回。所以本库不给它下发通道。
+/// </para>
 /// </remarks>
 public sealed class InfoBarBasic : Component
 {
@@ -25,10 +30,19 @@ public sealed class InfoBarBasic : Component
         var (icon, setIcon) = UseState(true);
 
         return VStack(8,
-            InfoBar("这是一条普通提示，用于说明上下文。"),
-            InfoBar("操作成功。", MuxControls.InfoBarSeverity.Success),
-            InfoBar("这个操作稍后会被弃用。", MuxControls.InfoBarSeverity.Warning),
-            InfoBar("保存失败：磁盘不可写。", MuxControls.InfoBarSeverity.Error),
+            // 官方那页几乎条条都有标题：它是"消息上方那行加粗的短句"，
+            // 与 Message 是两段不同的文本（一个概括、一个展开）。
+            InfoBar("这是一条普通提示，用于说明上下文。", title: "提示"),
+            InfoBar("操作成功。", MuxControls.InfoBarSeverity.Success, title: "成功"),
+            InfoBar("这个操作稍后会被弃用。", MuxControls.InfoBarSeverity.Warning, title: "警告"),
+            InfoBar("保存失败：磁盘不可写。", MuxControls.InfoBarSeverity.Error, title: "错误"),
+
+            // IsClosable：右上角出现 ×。关掉之后它<b>不会再被重新打开</b>——
+            // IsOpen 是种子值（只在挂载时写一次），不是受控值，
+            // 后续重渲染不会把用户按下的那一下撤回。
+            TextBlock("可关闭（IsClosable）").Caption().Subtle(),
+            InfoBar("这一条可以被关掉：点了 × 之后，重渲染不会再把它打开。",
+                title: "可关闭", isClosable: true),
 
             TextBlock("图标显不显示（IsIconVisible）").Caption().Subtle(),
             InfoBar("这一条的图标被关掉了，文字位置没变。", isIconVisible: icon),

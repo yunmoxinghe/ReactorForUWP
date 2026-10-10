@@ -138,7 +138,8 @@ public static class ReactorLog
 
         System.Diagnostics.Debug.WriteLine(line);
 
-        if ((int)level <= (int)ReactorLogLevel.Info)
+        if ((int)level <= (int)ReactorLogLevel.Info
+            || (PersistTrace && (int)level <= (int)ReactorLogLevel.Trace))
         {
             Persist(line);
         }
@@ -282,8 +283,63 @@ public static class ReactorLog
     };
 
     /// <summary>
+    /// 落盘日志的大小上限（字节）。达到就把当前这份挪成 <c>.1</c>，从头再写。
+    /// 默认 1 MB。
+    /// </summary>
+    /// <remarks>
+    /// <b>关掉 <see cref="RotatePersist"/> 即回到旧的"只 Append"行为</b>（文件无限增长）。
+    /// <para>
+    /// <b>注意它算的是字符数不是字节数。</b><c>StreamWriter</c> 默认写 UTF-8，
+    /// 一行里若有中文，实际占的字节比 <c>line.Length</c> 多。作为"别让日志无限长"
+    /// 这种粗粒度阈值够用了，没必要为它去精确算编码。
+    /// </para>
+    /// </remarks>
+    public static long MaxPersistBytes { get; set; } = 1024 * 1024;
+
+    /// <summary>
+    /// 要不要给落盘日志做轮转。<b>默认开。</b>
+    /// </summary>
+    /// <remarks>
+    /// 与本项目其余修法同律（可开关、关掉必须回到旧行为）——
+    /// <b>但这一处没有契约测试守着</b>：<see cref="ReactorLog"/> 依赖
+    /// <c>Windows.Storage.ApplicationData</c>，是 UWP 类型，编不进
+    /// <c>net10.0</c> 的测试工程，所以这里无法像 <c>SelectionGate</c> 那样
+    /// 用穷举 + 反向对照证明它。改动它请手工验一次。
+    /// </remarks>
+    public static bool RotatePersist { get; set; } = true;
+
+    /// <summary>
+    /// 要不要把 <see cref="ReactorLogLevel.Trace"/> 也落盘。<b>默认关</b>（Trace 只进内存 Ring）。
+    /// </summary>
+    /// <remarks>
+    /// 排查"点了没反应"这类病时开的：闸门的<b>吞掉</b>是 <c>Trace</c> 级，不落盘，
+    /// 于是真机上只能看见"放行"、看不见"被吞"，而病恰恰在被吞的那一侧。
+    /// 与本项目其余开关同律：<b>关掉即回到旧行为</b>（只落 Info 及以上）。
+    /// <para>
+    /// <b>它会改时序</b>（多一次文件开合），对依赖时序的病有治疗效应，
+    /// 开它拿到的是"开日志那一版"的证据，别拿它当原样的证据。
+    /// </para>
+    /// </remarks>
+    public static bool PersistTrace { get; set; }
+
+    /// <summary>累计已写字节数。<c>-1</c> = 还没 stat 过（首次写之前要摸一次长度）。</summary>
+    private static long _persisted = -1;
+
+    private static readonly object PersistGate = new();
+
+    /// <summary>
     /// 落盘。<b>失败必须静默</b>：日志是观测手段，不能因为它把进程带走。
     /// </summary>
+    /// <remarks>
+    /// <b>每一条都要开合一次文件</b>是刻意的：崩在半路时，"已经写进去的那些"
+    /// 比"缓冲区里没落盘的最后几十条"有用得多。代价是它慢，而且跑在哪个线程上
+    /// 就拖慢哪个线程——**这也是"开日志就能把时序 bug 治好"的机理**：
+    /// 它把"控件已可见但还没 Loaded"那个窗口拖了过去（2026-10 那颗 Heisenbug）。
+    /// 想排查这类 bug，请用 Trace 级（不落盘，只进内存 Ring）。
+    /// <para>
+    /// 轮转只保留<b>一代</b>（<c>.1</c>）：再多就是日志系统的活儿，不属于这里。
+    /// </para>
+    /// </remarks>
     private static void Persist(string line)
     {
         try
@@ -291,16 +347,62 @@ public static class ReactorLog
             var path = System.IO.Path.Combine(
                 Windows.Storage.ApplicationData.Current.LocalFolder.Path, "reactor-startup.log");
 
-            using var fs = new System.IO.FileStream(
-                path, System.IO.FileMode.Append, System.IO.FileAccess.Write, System.IO.FileShare.ReadWrite);
-            using var sw = new System.IO.StreamWriter(fs);
-            sw.Write(line);
-            sw.Write(Environment.NewLine);
+            // 任意线程都可能调用（含非 UI 线程），所以计数与轮转要串行。
+            // 锁里只做文件操作，不回调任何可能持锁的代码，不会死锁。
+            lock (PersistGate)
+            {
+                if (RotatePersist)
+                {
+                    if (_persisted < 0)
+                    {
+                        _persisted = System.IO.File.Exists(path)
+                            ? new System.IO.FileInfo(path).Length
+                            : 0;
+                    }
+
+                    if (_persisted >= MaxPersistBytes)
+                    {
+                        Rotate(path);
+                    }
+
+                    _persisted += line.Length + Environment.NewLine.Length;
+                }
+
+                using var fs = new System.IO.FileStream(
+                    path, System.IO.FileMode.Append, System.IO.FileAccess.Write, System.IO.FileShare.ReadWrite);
+                using var sw = new System.IO.StreamWriter(fs);
+                sw.Write(line);
+                sw.Write(Environment.NewLine);
+            }
         }
         catch
         {
             // 任意线程都可能调用（含非 UI 线程），访问 ApplicationData 可能失败。
             // Debug.WriteLine 已经输出过了，文件写不进去也不该影响进程存活。
+        }
+    }
+
+    /// <summary>
+    /// 把当前这份挪成 <c>.1</c>。<b>失败必须静默</b>：轮转失败最多是日志继续长，
+    /// 比为了轮转而丢掉一条正在写的日志要好。
+    /// </summary>
+    private static void Rotate(string path)
+    {
+        try
+        {
+            var backup = path + ".1";
+
+            if (System.IO.File.Exists(backup))
+            {
+                System.IO.File.Delete(backup);
+            }
+
+            System.IO.File.Move(path, backup);
+            _persisted = 0;
+        }
+        catch
+        {
+            // 轮转不了就让它继续长：日志系统的故障不该影响被测对象。
         }
     }
 }

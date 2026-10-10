@@ -46,6 +46,28 @@ public sealed class TestShellApp : Component
         // 进设置页复现：冷启动自动点进 Blank 模板的设置页。用来无人值守验证
         // "Frame.Navigate + Toolkit SettingsCard + 面包屑"整条路径不会崩。
         new TestCase("设置页复现", () => Component<SettingsNavProbe>()),
+
+        // 原生对照：不受控的裸 RadioButtons。与受控页做单变量 A/B，
+        // 判定"连点在第 3 次起失效"的病灶在受控逻辑还是 WinUI 内部。
+        new TestCase("原生 RadioButtons 对照", () => Component<NativeRadioLabPage>()),
+        new TestCase("纯原生 RadioButtons（无 handler）", () => Component<RawRadioLabPage>()),
+        new TestCase("RadioButtons DP 探针", () => Component<RadioDpProbePage>()),
+
+        // 重挂探针：TreeView / HyperlinkButton / SettingsCard 三个 handler 的回调
+        // 是不是"恰好一次"。盯两件事——委托里不许拿 sender 查表（点了没反应），
+        // 以及 Unmount 必须真解绑（重挂后每次点击都是双份回调）。详见页面注释。
+        new TestCase("重挂探针", () => Component<RebindProbePage>()),
+
+        // 裸 sender 对照：同一控件类型，A 侧走 Reactor handler（用捕获的 control 查表），
+        // B 侧自己挂事件、委托里故意用 sender 查表。用来给"WinRT 会不会交回另一个
+        // 托管包装"这件事一个真机上的二值结论 —— 它决定了重挂探针那三处修复
+        // 在真机上到底验不验得出来。详见页面注释。
+        new TestCase("裸 sender 对照", () => Component<SenderIdentityProbePage>()),
+
+        // 诊断量具自检：故意造两个反常场面（可同时选中的两个 RadioButton、后台空转
+        // 6 秒），让 winapp_diag.py 那两条从未被触发过的告警自己响一次 ——
+        // 不验过就不能信它。详见页面注释。
+        new TestCase("诊断量具自检", () => Component<DiagFixturePage>()),
     };
 
     /// <summary>默认落在 M1（原生桥池化 + 折叠）：这是要长期守住的那一档。</summary>

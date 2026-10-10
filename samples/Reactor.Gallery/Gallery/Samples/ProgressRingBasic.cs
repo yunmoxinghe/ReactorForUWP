@@ -39,9 +39,13 @@ public sealed class ProgressRingBasic : Component
                     .Caption().Subtle().VAlign(VerticalAlignment.Center)),
 
             HStack(24,
-                Cell("不确定（Value = null）", ProgressRing(null, isActive: active)),
+                Cell("不确定（Value = null）",
+                    ProgressRing(null, isActive: active)
+                        .Margin(10, 10, 0, 0)
+                        .VAlign(VerticalAlignment.Top)),
                 Cell("确定进度", ProgressRing(value, isActive: active)),
-                Cell("换个量程（0…1）", ProgressRing(0.65, maximum: 1, isActive: active))),
+                Cell("换个量程（0…1）",
+                    ProgressRing(0.65, maximum: 1, isActive: active).Margin(right: 60))),
 
             TextBlock("IsActive = false 时圆圈<b>整个消失</b>，位置留空——"
                       + "它不是暂停，是「我不转了」。本例三个圈同时受它控制，"
@@ -54,5 +58,5 @@ public sealed class ProgressRingBasic : Component
     private static Element Cell(string label, Element ring) =>
         VStack(6,
             TextBlock(label).Caption().Subtle(),
-            ring.Width(64).Height(64));
+            ring.Size(60, 60));
 }

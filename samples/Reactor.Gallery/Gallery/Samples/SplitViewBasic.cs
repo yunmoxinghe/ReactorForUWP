@@ -41,7 +41,7 @@ public sealed class SplitViewBasic : Component
     public override Element Render()
     {
         var (open, setOpen) = UseState(true);
-        var (mode, setMode) = UseState(3);
+        var (mode, setMode) = UseState(1);
 
         return VStack(12,
             HStack(8,
@@ -55,12 +55,13 @@ public sealed class SplitViewBasic : Component
                 .AutomationName("形态"),
 
             SplitView(
+                    // 标题那两个 Margin 照官方：面板头 60,12,0,0（左边 60 是留给
+                    // 汉堡按钮那条 48px 窄边的），内容头 12,12,0,0。
                     pane: VStack(8,
-                        TextBlock("面板").Body(),
-                        Button("首页", () => { }),
-                        Button("浏览", () => { }),
-                        Button("设置", () => { }))
-                        .Padding(12),
+                        TextBlock("面板内容").Body().Margin(60, 12, 0, 0),
+                        Button("首页", () => { }).Margin(12, 0, 0, 0),
+                        Button("浏览", () => { }).Margin(12, 0, 0, 0),
+                        Button("设置", () => { }).Margin(12, 0, 0, 0)),
                     content: VStack(8,
                         TextBlock("主内容区").Body(),
                         TextBlock($"当前形态：{Modes[mode]}；面板：{(open ? "展开" : "收起")}。")
@@ -68,12 +69,12 @@ public sealed class SplitViewBasic : Component
                         TextBlock("切到 Inline / CompactInline 再展开面板，能看见这一块被挤窄；" +
                                   "切到 Overlay / CompactOverlay，能看见面板盖在这一块上面。")
                             .Caption().Subtle().Wrap())
-                        .Padding(16),
+                        .Margin(12, 12, 0, 0),
                     isPaneOpen: open,
                     displayMode: ModeOf(mode),
-                    openPaneLength: 200,
+                    openPaneLength: 320,
                     compactPaneLength: 48)
-                .Height(180)
+                .Height(300)
                 .WithBorder(ThemeResource.Brush("CardStrokeColorDefaultBrush")),
 
             TextBlock("面板与主内容是两个独立的槽位（Pane / Content），不是「面板是第一个子元素」。")

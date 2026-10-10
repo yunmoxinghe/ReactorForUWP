@@ -38,6 +38,9 @@ internal static class SelectionGateTests
         Invariants();
         TwoPartGesture();
         ClickBeforeLoaded();
+        ClickBeforeLoadedWithCancelLast();
+        ClickBeforeLoadedWithPullBack();
+        ClickTwiceBeforeLoaded();
         Fuzz();
     }
 
@@ -75,9 +78,44 @@ internal static class SelectionGateTests
             "兑现时用户已改主意（控件值变了）→ 作废",
             !SelectionGate.ShouldFlushDeferred(2, 3, 0));
 
+        // 这一条是本轮修的那个 bug：控件在"未就绪"期间被点，进树复查时它已经被
+        // WinUI 内部的 Select(-1)（RadioButtons.cpp:431 子项 Unchecked / :518
+        // UpdateItemsSource）打到了"无选中"。旧判据见 -1 就放弃，于是那一发
+        // 永远补不出来 —— state 不更新、界面不动，用户看到的就是"点了没反应"。
+        // 该兑现的是 pending（用户那次点击的真实意图），不是控件此刻漂到的 -1。
         Program.Check(
-            "兑现时控件被清空（-1）→ 作废",
+            "兑现时控件漂到 -1、但记下的值仍有效 → 兑现（否则那次点击永远丢）",
+            SelectionGate.ShouldFlushDeferred(2, -1, 0));
+
+        // 这一条是 INV14：控件停在<b>受控目标</b>上、而记下的 pending 不是它。
+        // 旧判据把这一格读成"用户又点了别的值"→ 作废。但把它放到受控目标上的
+        // 是我们自己的异步回写（同一手势的"取消选中"那一发排下的 SelectionRestore），
+        // 不是用户的手 —— 用户此刻并没有"改主意"这个动作，pending 仍然有效。
+        // 判成作废的直接后果就是那一次点击凭空消失，而控件最后规规矩矩停在
+        // 受控值上，界面毫无异常。
+        Program.Check(
+            "兑现时控件停在被我们自己拉回的受控值上 → 仍兑现（那不是用户改主意）",
+            SelectionGate.ShouldFlushDeferred(2, 0, 0));
+
+        // fix discipline：关掉开关必须回到旧行为，且上面那条断言翻成失败。
+        // 不然这个"修"就只是把旧行为改了个名字，谁也没法证伪。
+        SelectionGate.FlushWhenControlPulledBack = false;
+
+        Program.Check(
+            "关掉开关 → 回到旧行为（控件停在受控值上就判成用户改主意）",
+            !SelectionGate.ShouldFlushDeferred(2, 0, 0));
+
+        SelectionGate.FlushWhenControlPulledBack = true;
+
+        // fix discipline：关掉开关必须回到旧行为，且上面那条断言翻成失败。
+        // 不然这个"修"就只是把旧行为改了个名字，谁也没法证伪。
+        SelectionGate.FlushWhenControlCleared = false;
+
+        Program.Check(
+            "关掉开关 → 回到旧行为（控件漂到 -1 就作废）",
             !SelectionGate.ShouldFlushDeferred(2, -1, 0));
+
+        SelectionGate.FlushWhenControlCleared = true;
 
         Program.Check(
             "兑现前受控下发已把它收敛到位（pending == target）→ 作废，别多调一次",
@@ -317,6 +355,254 @@ internal static class SelectionGateTests
             "反向对照：控件被受控重放拉回旧值（正是用户看到的「点了没反应」）",
             broken.ControlIndex == 0,
             $"控件={broken.ControlIndex} trace={Trace(broken)}");
+    }
+
+    /// <summary>
+    /// INV13：未就绪窗口里的点击，若"取消选中"那一发<b>后到</b>（进树复查时控件停在
+    /// <c>-1</c>），这一发同样不得被静默丢掉。
+    /// </summary>
+    /// <remarks>
+    /// INV12 守的是"未就绪就静默丢弃"这条策略，但它用的点击形状是
+    /// <c>cancelFirst: true</c>——取消在先、真值在后，控件最终停在用户选的值上。
+    /// 而 <c>RadioButtons.cpp:407-431</c> 的两条路径<b>谁先谁后没有保证</b>
+    /// （真机实测：那一发 -1 有时在真值前 3ms，有时在真值后 4ms）。一旦取消那一发
+    /// <b>后到</b>，控件在进树复查的那一刻就停在 <c>-1</c>。
+    /// <para>
+    /// 旧判据 <c>ShouldFlushDeferred</c> 见到 <c>currentIndex &lt; 0</c> 就放弃，
+    /// 理由是"控件现在什么都没选中，没有可补的发"。这个理由漏了半句：
+    /// <b>可补的发在 <c>pending</c> 里，不在控件上</b>——pending 记的是用户那次点击
+    /// 的真实意图，控件漂到 -1 只是 WinUI 的中间态（<c>Select(-1)</c> 的作者是
+    /// 子项 Unchecked 或 <c>UpdateItemsSource</c>，不是用户）。于是这一次点击
+    /// 永远出不来：state 不变、控件被受控重放拉回旧值，用户看到的就是"点了没反应"。
+    /// </para>
+    /// <para>
+    /// 修法：<b>兑现的权威是 <c>pending</c></b>；控件此刻的值只用来判"用户有没有
+    /// 改主意"（<c>currentIndex &gt;= 0 &amp;&amp; != pending</c> 才作废）。
+    /// 控件漂到 -1 不构成放弃的理由。
+    /// </para>
+    /// <para>
+    /// 与 INV12 的关系：两条守的是同一个窗口，但点击形状不同，漏掉任何一条
+    /// 都会让"一半的点击顺序"静默失效。
+    /// </para>
+    /// </remarks>
+    private static void ClickBeforeLoadedWithCancelLast()
+    {
+        Program.Section("INV13 / 取消那一发后到（控件停在 -1）：不得被静默丢掉");
+
+        ControlledSelectionSim Build(bool flushWhenCleared)
+        {
+            var saved = SelectionGate.FlushWhenControlCleared;
+            SelectionGate.FlushWhenControlCleared = flushWhenCleared;
+
+            try
+            {
+                var sim = new ControlledSelectionSim();
+
+                sim.Mount(0);
+                sim.BeginRepeaterLoad();
+                // 用户在这个窗口里点了第 2 项：框架还没就绪，这一发被吞、记进 Deferred。
+                sim.Click(2);
+                // 然后控件把选中项<b>回收</b>掉（虚拟化 / 折叠 / 切页都走这条路），
+                // 真实控件会无条件 Select(-1)（cpp:304-315），于是控件漂到"无选中"。
+                sim.Recycle(2);
+                // 控件自身的 Loaded 派发到框架：此刻复查，控件停在 -1。
+                sim.CompleteLoad();
+                sim.Drain();
+
+                return sim;
+            }
+            finally
+            {
+                SelectionGate.FlushWhenControlCleared = saved;
+            }
+        }
+
+        string Trace(ControlledSelectionSim sim) => string.Join(" | ", sim.Trace);
+
+        var ok = Build(flushWhenCleared: true);
+
+        Program.Check(
+            "用户选的值进了 state",
+            ok.State == 2,
+            $"state={ok.State} trace={Trace(ok)}");
+
+        Program.Check(
+            "控件最终停在用户选的值上",
+            ok.ControlIndex == 2,
+            $"控件={ok.ControlIndex} trace={Trace(ok)}");
+
+        Program.Check(
+            "恰好一次回调，值就是用户点的那个",
+            ok.CallbackCount == 1 && ok.CallbackValues.Contains(2),
+            $"回调 {ok.CallbackCount} 次，值=[{string.Join(",", ok.CallbackValues)}] trace={Trace(ok)}");
+
+        // 反向对照：关掉开关必须复现"点了没反应"——它红了才说明这条用例真摸到了病。
+        var broken = Build(flushWhenCleared: false);
+
+        Program.Check(
+            "反向对照（关掉开关）：这一次点击彻底丢失（无回调、state 停在旧值）",
+            broken.CallbackCount == 0 && broken.State == 0,
+            $"回调 {broken.CallbackCount} 次，state={broken.State} trace={Trace(broken)}");
+
+        Program.Check(
+            "反向对照：控件被受控重放拉回旧值（正是用户看到的「点了没反应」）",
+            broken.ControlIndex == 0,
+            $"控件={broken.ControlIndex} trace={Trace(broken)}");
+    }
+
+    /// <summary>
+    /// INV14：未就绪窗口里的点击记下之后，控件被<b>我们自己的异步回写</b>拉回受控值，
+    /// 这一发同样不得被判成"用户改主意"而作废。
+    /// </summary>
+    /// <remarks>
+    /// 记下 <c>pending</c> 之后、<c>Loaded</c> 到来之前，中间还夹着一条异步队列：
+    /// 同一手势的"取消选中"那一发会排一次 <c>SelectionRestore</c>，它把控件写回
+    /// <b>受控旧值</b>。于是复查时控件停在受控目标上，而 <c>pending</c> 是用户刚点
+    /// 的那个值——旧判据 <c>currentIndex != pending</c> 把它读成"用户改主意"，
+    /// 那一次点击就凭空消失了。
+    /// <para>
+    /// 用户看到的样子与 INV12 / INV13 完全一致：<b>点了没反应</b>。而且它更隐蔽——
+    /// 控件最后规规矩矩停在受控值上，state 与控件一致，界面没有任何异常。
+    /// 上面两条不变量（"值有主人"、"state 与控件一致"）对它<b>全盲</b>，
+    /// 只有把"用户做过什么"与"state 收到什么"对起来看才抓得到。
+    /// </para>
+    /// <para>
+    /// 修法：<b>"用户改主意"的判据收紧一格</b>——只有控件停在"既不是 pending、
+    /// 也不是受控目标"的值上才算用户改了主意。停在受控目标上是我们自己拉回去的，
+    /// 用户此刻并没有伸手。
+    /// </para>
+    /// </remarks>
+    private static void ClickBeforeLoadedWithPullBack()
+    {
+        Program.Section("INV14 / 被我们自己拉回受控值：不得判成「用户改主意」");
+
+        ControlledSelectionSim Build(bool flushWhenPulledBack)
+        {
+            var saved = SelectionGate.FlushWhenControlPulledBack;
+            SelectionGate.FlushWhenControlPulledBack = flushWhenPulledBack;
+
+            try
+            {
+                var sim = new ControlledSelectionSim();
+
+                sim.Mount(1);
+                sim.BeginRepeaterLoad();
+                // 用户在窗口里点了第 0 项：被吞、记进 Deferred。
+                sim.Click(0);
+                // 又点了一下<b>当前</b>项：只发 Unchecked → 控件被拨到 -1
+                // （RadioButtons.cpp:431），于是"取消选中"排下一次异步回写。
+                sim.Click(0, cancelFirst: true);
+                // 回写落地：控件此刻停在 -1，回写的复查挡不住，于是被拉回受控值 1。
+                // 把它放到那儿的<b>是我们，不是用户</b>。
+                sim.Drain();
+                // 控件自身的 Loaded 派发到框架：此刻复查，控件停在 1，pending 是 0。
+                sim.CompleteLoad();
+                sim.Drain();
+
+                return sim;
+            }
+            finally
+            {
+                SelectionGate.FlushWhenControlPulledBack = saved;
+            }
+        }
+
+        string Trace(ControlledSelectionSim sim) => string.Join(" | ", sim.Trace);
+
+        var ok = Build(flushWhenPulledBack: true);
+
+        Program.Check(
+            "用户选的值进了 state",
+            ok.State == 0,
+            $"state={ok.State} trace={Trace(ok)}");
+
+        Program.Check(
+            "控件最终停在用户选的值上",
+            ok.ControlIndex == 0,
+            $"控件={ok.ControlIndex} trace={Trace(ok)}");
+
+        Program.Check(
+            "恰好一次回调，值就是用户点的那个",
+            ok.CallbackCount == 1 && ok.CallbackValues.Contains(0),
+            $"回调 {ok.CallbackCount} 次，值=[{string.Join(",", ok.CallbackValues)}] trace={Trace(ok)}");
+
+        // 反向对照：关掉开关必须复现"点了没反应"——它红了才说明这条用例真摸到了病。
+        var broken = Build(flushWhenPulledBack: false);
+
+        Program.Check(
+            "反向对照（关掉开关）：这一次点击彻底丢失（无回调、state 停在旧值）",
+            broken.CallbackCount == 0 && broken.State == 1,
+            $"回调 {broken.CallbackCount} 次，state={broken.State} trace={Trace(broken)}");
+
+        Program.Check(
+            "反向对照：控件此时规规矩矩停在受控值上（界面毫无异常，只有用户知道没生效）",
+            broken.ControlIndex == 1,
+            $"控件={broken.ControlIndex} trace={Trace(broken)}");
+    }
+
+    /// <summary>
+    /// INV15：未就绪窗口里用户先点了 A、<b>随后又拨回受控值 B</b>，先前记下的 A
+    /// 必须作废——否则进树时按过期的旧意图补发，把用户<b>最后</b>那一下整个盖掉。
+    /// </summary>
+    /// <remarks>
+    /// 记下的那一发之所以会过期：<c>ShouldDeferNotReady</c> 只在"值 != 受控目标"
+    /// 时记账，于是"用户把控件拨回受控目标"这一发<b>既不记账、也不作废旧账</b>。
+    /// 旧账于是活到进树那一刻，被当成最新意图补发出去。
+    /// <para>
+    /// 难点在于<b>光看值分不开两种来源</b>：受控目标正好是 B 时，我们把控件写成 B
+    /// 抛一发 <c>B</c>，用户把控件拨回 B 也抛一发 <c>B</c>。
+    /// 所以要有"此刻是不是我们自己在写"这道旗标（<c>Applying</c>）——
+    /// 它和"重建中"那道同构，只是一个替 WinUI 的 <c>UpdateItemsSource</c> 关门，
+    /// 一个替我们自己的写回关门。
+    /// </para>
+    /// <para>
+    /// 用户看到的样子很反直觉：<b>他最后点的那一项不生效，先点的那一项反而生效了。</b>
+    /// 而且补发出来的值是用户<b>早就放弃</b>的那个，界面与 state 依旧自洽，
+    /// 同样躲过了终态类的不变量。
+    /// </para>
+    /// </remarks>
+    private static void ClickTwiceBeforeLoaded()
+    {
+        Program.Section("INV15 / 用户随后拨回受控值：先前记下的那一发必须作废");
+
+        ControlledSelectionSim Build(bool cancelDeferred)
+        {
+            var sim = new ControlledSelectionSim { CancelDeferredOnPullBack = cancelDeferred };
+
+            sim.Mount(1);
+            sim.BeginRepeaterLoad();
+            // 第一次点击：值不是受控目标 → 记下。
+            sim.Click(0);
+            // 第二次点击：把控件拨回受控目标 1。这一发自己不记账，
+            // 但<b>必须</b>把上一次记下的作废——用户改主意了。
+            sim.Click(1);
+            sim.CompleteLoad();
+            sim.Drain();
+            return sim;
+        }
+
+        string Trace(ControlledSelectionSim sim) => string.Join(" | ", sim.Trace);
+
+        var ok = Build(cancelDeferred: true);
+
+        Program.Check(
+            "用户最后停在哪，state 就是哪个（没有凭空的回调）",
+            ok.State == 1 && ok.CallbackCount == 0,
+            $"state={ok.State} 回调 {ok.CallbackCount} 次 trace={Trace(ok)}");
+
+        Program.Check(
+            "控件停在用户最后选的值上",
+            ok.ControlIndex == 1,
+            $"控件={ok.ControlIndex} trace={Trace(ok)}");
+
+        // 反向对照：不作废就必须观察到"按过期意图补发"。
+        var broken = Build(cancelDeferred: false);
+
+        Program.Check(
+            "反向对照（不作废）：进树时按过期的旧意图补发（state 被拉回用户早已放弃的值）",
+            broken.CallbackCount == 1 && broken.State == 0,
+            $"回调 {broken.CallbackCount} 次，值=[{string.Join(",", broken.CallbackValues)}] " +
+            $"state={broken.State} trace={Trace(broken)}");
     }
 
     // ── 2. 闭环不变量 ──────────────────────────────────────────────
@@ -758,6 +1044,94 @@ internal static class SelectionGateTests
         Console.WriteLine(
             $"        未修复时同一批序列失败：吞后回写关掉 {noWriteBack} 条，回声泄漏 {withLeak} 条");
 
+        // 第四条对照：INV13 那一发（未就绪期间点击、控件随后漂到 -1）。
+        // 同样是给测试自身做体检：若关掉也全绿，说明这 20000 条序列<b>根本没走出
+        // 那个形状</b>，那 INV13 就是本次修复的唯一防线，别误把 fuzz 当成它的回归网。
+        // 读数<b>不</b>用终态失败条数，用"丢失次数"。
+        // 理由见 ControlledSelectionSim.DeferredLostToClearedCount：终态判据只看序列
+        // 跑完之后 state 兑没兑现最后一次点击，丢失发生在<b>中段</b>时会被后续点击
+        // 掩盖，于是 20000×24 条里只抓得到 2 条——那是<b>判据的视力</b>，
+        // 不是覆盖率的真相。这里数的是每一次丢失本身。
+        ControlledSelectionSim.DeferredLostToClearedCount = 0;
+
+        var noFlushWhenCleared = RunSequences(
+            writeBack: true, leakEcho: false, dropStale: true, restoreWithoutListener: true,
+            report: false, silent: false, out _, flushWhenCleared: false);
+
+        var lostToCleared = ControlledSelectionSim.DeferredLostToClearedCount;
+
+        // 门槛取 10 而不是 1：1 次就放行的话，将来动作分布一漂移、形状偶然消失一次
+        // 也可能蒙混过关。当前实测 60 次，余量 6 倍。
+        //
+        // 但要<b>如实说明</b>：60 次 / 480000 步，这个形状在随机序列里<b>仍然罕见</b>，
+        // INV13 的主力防线是它那条确定性用例（<c>ClickBeforeLoadedWithCancelLast</c>），
+        // 这里只保证 fuzz 不至于对它完全失明。
+        Program.Check(
+            "反向对照：关掉「控件漂到 -1 仍补发」后必须真的丢点击（证模糊测试对 INV13 有牙齿）",
+            lostToCleared >= 10,
+            lostToCleared >= 10
+                ? null
+                : $"关掉修法只丢了 {lostToCleared} 次 —— 这批序列基本没走出" +
+                  "「未就绪点击 + 漂到 -1」那个形状，INV13 只能靠确定性用例守着");
+
+        Console.WriteLine(
+            $"        未修复时：控件漂到 -1 不补发 → 终态失败 {noFlushWhenCleared} 条，" +
+            $"实际丢失 {lostToCleared} 次（终态判据只看见后者的一部分：中段丢失会被" +
+            $"后续点击掩盖；INV13 的主力防线仍是确定性用例）");
+
+        // 第五条对照：INV14 那一发——控件被<b>我们自己的回写</b>拉回受控值。
+        // 这一格是旧判据 `currentIndex != pending` 唯一会误伤的地方：
+        // 判成"用户改主意"之后，那一次点击消失，而控件最后规规矩矩停在受控值上。
+        var noFlushWhenPulledBack = RunSequences(
+            writeBack: true, leakEcho: false, dropStale: true, restoreWithoutListener: true,
+            report: false, silent: false, out _, flushWhenPulledBack: false);
+
+        Program.Check(
+            "反向对照：关掉「被拉回受控值仍补发」后同一批序列必须失败（证模糊测试对 INV14 有牙齿）",
+            noFlushWhenPulledBack > 0,
+            noFlushWhenPulledBack > 0
+                ? null
+                : "关掉修法也全绿——这批序列没走出「未就绪点击 + 回写拉回」那个形状，" +
+                  "INV14 只能靠确定性用例守着");
+
+        Console.WriteLine(
+            $"        未修复时同一批序列失败：被拉回受控值不补发 {noFlushWhenPulledBack} 条");
+
+        // 第六条对照：INV15——用户随后拨回受控值时，先前记下的那一发不作废。
+        var noCancelDeferred = RunSequences(
+            writeBack: true, leakEcho: false, dropStale: true, restoreWithoutListener: true,
+            report: false, silent: false, out _, cancelDeferred: false);
+
+        Program.Check(
+            "反向对照：不作废过期意图后同一批序列必须失败（证模糊测试对 INV15 有牙齿）",
+            noCancelDeferred > 0,
+            noCancelDeferred > 0
+                ? null
+                : "关掉修法也全绿——这批序列没走出「窗口内连点两次」那个形状，" +
+                  "INV15 只能靠确定性用例守着");
+
+        Console.WriteLine(
+            $"        未修复时同一批序列失败：过期意图不作废 {noCancelDeferred} 条");
+
+        // 第七条对照：认不出"这一发是我们自己写的"（真代码的 Applying 窗失效）。
+        // 它是 INV15 的另一半：作废必须先分清作者，否则"我们写成受控值"那一发
+        // 会被当成"用户拨回受控值"，凭空作废一次根本没过期的意图——
+        // 修法反过来变成新的丢点击来源。
+        var noDetect = RunSequences(
+            writeBack: true, leakEcho: false, dropStale: true, restoreWithoutListener: true,
+            report: false, silent: false, out _, detectOwnWrites: false);
+
+        Program.Check(
+            "反向对照：认不出自己写的之后同一批序列必须失败（证 Applying 旗标有回归网）",
+            noDetect > 0,
+            noDetect > 0
+                ? null
+                : "关掉它也全绿 —— Applying 旗标目前是裸的，" +
+                  "没人能证伪'没有它也一样'，将来可能被当冗余删掉");
+
+        Console.WriteLine(
+            $"        未修复时同一批序列失败：认不出自己写的 {noDetect} 条");
+
         // 第三条对照：去掉 SelectionRestore 里那句"目标被改过就别动手"。
         // 这道复查此前<b>没有任何测试守着</b>——仿真把回写简化成"跟渲染共用同一个 pending
         // 旗标"，执行时机永远紧跟下一次渲染，快照不可能陈旧，删掉那行也不会红。
@@ -826,6 +1200,43 @@ internal static class SelectionGateTests
 
         Console.WriteLine(
             $"        纯无回调场景：修复后失败 {silentOk} 条，退回旧写法失败 {silentBroken} 条");
+
+        // ── 真机配置那一批 ──────────────────────────────────────────
+        //
+        // 上面<b>所有</b>批次都把 INV11 的两道防护（作废 / 兑现前复查）关着——
+        // 那是给它们做反向对照用的。副作用是：<b>这 20000×24 条随机序列从来没在
+        // 真机实际配置下跑过</b>。真机上两道都是开的，而"开着的组合"会不会引出
+        // 别的交互，关着的批次一个字都回答不了。
+        //
+        // 这一批补的正是那个缺口。它要是红了，说明还有一批事故从来没被测到过。
+        var liveFailures = RunSequences(
+            writeBack: true, leakEcho: false, dropStale: true, restoreWithoutListener: true,
+            report: true, silent: false, out _,
+            cancelRestore: true, guardUserValue: true);
+
+        Program.Check(
+            $"真机配置（INV11 两道防护都在）{Sequences} 条随机序列全部满足不变量",
+            liveFailures == 0,
+            liveFailures == 0
+                ? null
+                : $"{liveFailures} 条失败 —— 真机配置下还有没修到的事故（详见上方首个失败时序）");
+
+        // 反向对照：真机配置下把 INV14 那道关掉，同样必须红。
+        // 否则"真机配置"这一批对本次修复也是空转。
+        var liveNoPullBack = RunSequences(
+            writeBack: true, leakEcho: false, dropStale: true, restoreWithoutListener: true,
+            report: false, silent: false, out _,
+            flushWhenPulledBack: false, cancelRestore: true, guardUserValue: true);
+
+        Program.Check(
+            "反向对照：真机配置下关掉「被拉回受控值仍补发」也必须失败",
+            liveNoPullBack > 0,
+            liveNoPullBack > 0
+                ? null
+                : "真机配置下关掉它也全绿 —— 这批序列对 INV14 没有牙齿");
+
+        Console.WriteLine(
+            $"        真机配置：修复后失败 {liveFailures} 条，关掉 INV14 失败 {liveNoPullBack} 条");
     }
 
     private static void RecordFailure(
@@ -845,6 +1256,15 @@ internal static class SelectionGateTests
         }
     }
 
+    /// <summary>把"哪一条不变量在响"记下来——只知道"有 N 条失败"没法定位。</summary>
+    private static void Tally(ref int counter, bool hit)
+    {
+        if (hit)
+        {
+            counter++;
+        }
+    }
+
     private static int RunSequences(
         bool writeBack,
         bool leakEcho,
@@ -852,12 +1272,35 @@ internal static class SelectionGateTests
         bool restoreWithoutListener,
         bool report,
         bool silent,
-        out int maxRounds)
+        out int maxRounds,
+        bool flushWhenCleared = true,
+        bool flushWhenPulledBack = true,
+        bool cancelDeferred = true,
+
+        // 这两道默认<b>关</b>：前面所有批次都要它们关着——那正是 INV11 的反向对照
+        // 形状（"取消选中"排下的纠正到底能不能挡住）。副作用是
+        // <b>fuzz 长期没跑过真机实际配置</b>（真机两道都是开的），
+        // 这个缺口由下面那批 live 序列补上。
+        bool cancelRestore = false,
+        bool guardUserValue = false,
+        bool detectOwnWrites = true)
     {
         var rng = new Random(20261006);   // 固定种子：失败可复现
         var failures = 0;
         var firstFailure = string.Empty;
         maxRounds = 0;
+
+        // 五条不变量各自的失败条数。只报总数等于只知道"生病了"不知道"哪儿疼"。
+        var convergedFails = 0;
+        var explainedFails = 0;
+        var faithfulFails = 0;
+        var negativeFails = 0;
+        var honoredFails = 0;
+
+        var savedFlush = SelectionGate.FlushWhenControlCleared;
+        var savedPullBack = SelectionGate.FlushWhenControlPulledBack;
+        SelectionGate.FlushWhenControlCleared = flushWhenCleared;
+        SelectionGate.FlushWhenControlPulledBack = flushWhenPulledBack;
 
         for (var s = 0; s < Sequences; s++)
         {
@@ -870,9 +1313,11 @@ internal static class SelectionGateTests
                 LeakEchoRegistration = leakEcho,
                 SealEchoAfterWrite = !leakEcho,
                 DropStaleRestore = dropStale,
-                CancelRestoreOnRealSelect = false,
-                GuardRestoreOnUserValue = false,
+                CancelRestoreOnRealSelect = cancelRestore,
+                GuardRestoreOnUserValue = guardUserValue,
                 RestoreWithoutListener = restoreWithoutListener,
+                CancelDeferredOnPullBack = cancelDeferred,
+                DetectOwnWrites = detectOwnWrites,
             };
             var itemCount = 3;
             sim.Mount(rng.Next(itemCount));
@@ -893,7 +1338,7 @@ internal static class SelectionGateTests
                     sim.SetCallback(false);
                 }
 
-                switch (rng.Next(7))
+                switch (rng.Next(8))
                 {
                     case 0:
                     case 1:
@@ -947,10 +1392,32 @@ internal static class SelectionGateTests
                         sim.SetCallback(rng.Next(4) != 0);
                         break;
 
+                    // 内部 repeater 单独进树：从这一刻起 WinUI 能接受选中、也会抛事件，
+                    // 但框架的就绪标记还没置上。中间这段就是"看得见、点得到，
+                    // 框架却认为没就绪"的窗口 —— INV12 / INV13 那个形状只能在它里面出现。
+                    //
+                    // 这一格是<b>后来补的</b>：原先随机序列只有 sim.Load()，它把两段
+                    // 一次性走完，窗口从来没被打开过。于是第四条反向对照（关掉
+                    // 「控件漂到 -1 仍补发」）全绿 —— 不是修法多余，是这 20000 条序列
+                    // 压根走不出那个形状。那次失败是测试自己的体检报告。
+                    case 6:
+                        if (!sim.RepeaterLoaded)
+                        {
+                            sim.BeginRepeaterLoad();
+                        }
+
+                        break;
+
                     default:
-                        if (!sim.IsLoaded)
+                        // 两段连着走（不留窗口）：真机上也有这种情形 —— repeater 与
+                        // 控件自身在同一帧进树，用户来不及在中间点一下。
+                        if (!sim.RepeaterLoaded)
                         {
                             sim.Load();
+                        }
+                        else if (!sim.IsLoaded)
+                        {
+                            sim.CompleteLoad();
                         }
 
                         break;
@@ -964,6 +1431,19 @@ internal static class SelectionGateTests
                 {
                     sim.Drain();
                 }
+            }
+
+            // 收尾：真实生命周期里 repeater 进树之后，控件自身的 Loaded 终究会到
+            // （页面不会永远停在"进了一半"的状态）。补齐再判不变量，
+            // 否则"未就绪补发"这条链路会因为序列恰好在窗口里结束而报出假失败。
+            if (!sim.RepeaterLoaded)
+            {
+                sim.BeginRepeaterLoad();
+            }
+
+            if (!sim.IsLoaded)
+            {
+                sim.CompleteLoad();
             }
 
             var rounds = sim.Drain();
@@ -991,9 +1471,24 @@ internal static class SelectionGateTests
             // 不变量三：-1 绝不能进用户回调。它是中间态，进回调就把 state 打成非法值。
             var noNegative = !sim.CallbackValues.Contains(-1);
 
-            if (!converged || !explained || !faithful || !noNegative)
+            // 不变量四：用户真的换了项、那一刻回调也在场 ⇒ 那一次点击必须进 state。
+            //
+            // 这一条是<b>后加的</b>，加它是因为上面三条对"点击凭空消失"这个形状是盲的：
+            // 那一发丢了之后，控件会被受控下发拉回旧值 —— 于是"值有主人"（二）、
+            // "state 与控件一致"（三）、"回调不含 -1"（三·续）全部成立，
+            // 界面看着规规矩矩，只有用户知道他点的那一下没生效。
+            // 一次丢失的点击在终态上和"用户根本没点"长得一模一样，
+            // 只看最终状态永远抓不到，必须把"用户做过什么"和"state 收到什么"对起来看。
+            var honored = sim.LastClickHonored;
+
+            if (!converged || !explained || !faithful || !noNegative || !honored)
             {
                 failures++;
+                Tally(ref convergedFails, !converged);
+                Tally(ref explainedFails, !explained);
+                Tally(ref faithfulFails, !faithful);
+                Tally(ref negativeFails, !noNegative);
+                Tally(ref honoredFails, !honored);
 
                 if (report && firstFailure.Length == 0)
                 {
@@ -1002,10 +1497,18 @@ internal static class SelectionGateTests
                         $" 有解释={explained} state 到位={faithful}" +
                         $"（state={sim.State} 受控目标={sim.Target} " +
                         $"控件={sim.ControlIndex} 末次点击={sim.LastUserClick}）" +
+                        $" 点击兑现={honored}（该进 state 的是 {sim.ExpectStateFromClick}）" +
                         $" 无负值={noNegative}（回调值=[{string.Join(",", sim.CallbackValues)}]）" +
                         Environment.NewLine + "    " + string.Join(Environment.NewLine + "    ", sim.Trace);
                 }
             }
+        }
+
+        if (report)
+        {
+            Console.WriteLine(
+                $"        失败分布：收敛 {convergedFails} / 有解释 {explainedFails} / " +
+                $"state 到位 {faithfulFails} / 含负值 {negativeFails} / 点击兑现 {honoredFails}");
         }
 
         if (report && firstFailure.Length > 0)
@@ -1013,6 +1516,10 @@ internal static class SelectionGateTests
             Console.WriteLine("    首个失败时序：");
             Console.WriteLine("    " + firstFailure);
         }
+
+        // 开关是全局静态：必须还原，否则会顺着调用顺序污染后面的用例。
+        SelectionGate.FlushWhenControlCleared = savedFlush;
+        SelectionGate.FlushWhenControlPulledBack = savedPullBack;
 
         return failures;
     }

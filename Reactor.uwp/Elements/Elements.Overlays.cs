@@ -11,6 +11,101 @@ namespace Microsoft.UI.Reactor;
 // ════════════════════════════════════════════════════════════════════
 
 /// <summary>
+/// 浮层容器，对应 UWP 原生 <c>Windows.UI.Xaml.Controls.Primitives.Popup</c>。
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>它是容器不是对话框。</b><c>Popup</c> 自己没有 chrome（没有边框、标题、
+/// 按钮），只是"一块盖在最上层的任意内容"。带着白底、圆角、阴影那一身皮的
+/// 是 <c>Flyout</c> / <c>ContentDialog</c>；这里的用法是"装一棵任意子树"。
+/// 官方把它归在 <c>Dialogs &amp; flyouts</c> 那组，位置认同的是同一个分类。
+/// </para>
+/// <para>
+/// <b>它是 <c>FrameworkElement</c>，不是 <c>ContentControl</c></b>（winmd 里基类
+/// 直指 <c>FrameworkElement</c>），内容在 <c>Child</c> 上而不是 <c>Content</c> 上。
+/// 这一层差别在框架里是有代价的：<c>PatchSingleChild</c> 默认只认
+/// <c>ContentControl</c> 与 <c>Border</c>，<c>UnmountTree</c> 的单槽分支<b>更窄</b>——
+/// 连 <c>SingleChildAccessor</c> 都不查。所以本元素在两边都要留一条自己的
+/// 路径（见 <c>PopupHandler</c> 的注释）。
+/// </para>
+/// <para>
+/// <b><c>IsOpen</c> 是受控的。</b>轻 dismiss（点外面 / Esc）是用户在改它，那一发
+/// 由官方的 <c>Closed</c> 回执，写回时靠 <c>EchoGuard</c> 认下来（与
+/// <c>TeachingTip.IsOpen</c> 同形）。回执通道<b>只有
+/// <see cref="OnIsOpenChanged"/></b>：官方的 <c>Opened</c> 与 <c>Closed</c>
+/// 说的是同一件事的两半（"开了" / "关了"），拆成两个回调等于让调用方自己
+/// 拼出一个 bool——拼漏一半就是状态不同步。
+/// </para>
+/// <para>
+/// <b><c>PlacementTarget</c> 给的是"同层下标"</b>（见
+/// <see cref="TargetIndex"/>）：理由与 <see cref="TeachingTipElement.TargetIndex"/>
+/// 一字不差——声明式树里没有 <c>x:Name</c>，能稳定指向"另一个元素"的只有
+/// 它在父容器里的位置。
+/// </para>
+/// <para>
+/// <b><c>ActualPlacement</c> 不装。</b>官方那个属性是<b>只读</b>的协商结果
+/// （空间不够时控件会自己换个方位），<c>ActualPlacementChanged</c> 是它唯一的
+/// 出口——这与 <c>TwoPaneView.Mode</c> 同一类形状。本元素不提供"我期望它落在
+/// 哪儿之外的第二个读数"，因为 <c>DesiredPlacement</c> 已经是
+/// "我们想要什么"，再加一个"实际给了什么"就会有两个互相冲突的答案来源。
+/// </para>
+/// </remarks>
+public sealed record PopupElement : Element
+{
+    /// <summary>里面的内容（任意元素树）。</summary>
+    public Element? Child { get; init; }
+
+    /// <summary>
+    /// 是否展开。<b>受控</b>：给了值才受控，<c>null</c> 就是"不管它"
+    /// （那时只能点按钮这种手工方式开关）。
+    /// </summary>
+    public bool? IsOpen { get; init; }
+
+    /// <summary>点外面 / Esc 是否关掉它（官方 <c>IsLightDismissEnabled</c>，默认<b>关</b>）。</summary>
+    public bool IsLightDismissEnabled { get; init; }
+
+    /// <summary>
+    /// 是否把它<b>约束在窗口范围内</b>（官方 <c>ShouldConstrainToRootBounds</c>，
+    /// <c>null</c> = 不写、交给官方默认）。
+    /// </summary>
+    /// <remarks>
+    /// 这是 UWP 这份 <c>Popup</c> 最容易被误会的一处：默认（<c>true</c>）是
+    /// "裹在窗口内"——它会尝试用 <see cref="DesiredPlacement"/>，装不下就被
+    /// 窗口边界挤回去。要"浮出到窗口之外"（菜单式的那种观感）得显式给
+    /// <c>false</c>。<b>开也没用、关也没反应的场景通常不是它坏了</b>，
+    /// 是窗口本身就占满了可用区域。
+    /// </remarks>
+    public bool? ShouldConstrainToRootBounds { get; init; }
+
+    /// <summary>相对目标（或窗口左上角）的水平偏移（官方 <c>HorizontalOffset</c>）。</summary>
+    public double? HorizontalOffset { get; init; }
+
+    /// <summary>相对目标（或窗口左上角）的垂直偏移（官方 <c>VerticalOffset</c>）。</summary>
+    public double? VerticalOffset { get; init; }
+
+    /// <summary>
+    /// 指向<b>同层第几个</b>子元素（见类型注释）。不填就是"不跟着谁"，
+    /// 那时坐标参考窗口左上角。
+    /// </summary>
+    public int? TargetIndex { get; init; }
+
+    /// <summary>
+    /// 想挂在目标的哪一侧（官方 <c>DesiredPlacement</c>）。<c>null</c> = 用官方默认。
+    /// </summary>
+    /// <remarks>
+    /// 它是"<b>期望</b>"而不是"结果"：装不下时控件会自己挪
+    /// （这正是 <c>ActualPlacement</c> 存在的理由，而那个读数这里不提供）。
+    /// </remarks>
+    public Windows.UI.Xaml.Controls.Primitives.PopupPlacementMode? DesiredPlacement { get; init; }
+
+    /// <summary>
+    /// 展开状态变了。参数就是新的 <c>IsOpen</c>——用户 light dismiss 之后是
+    /// <c>false</c>，除此之外没有别的来源。
+    /// </summary>
+    public Action<bool>? OnIsOpenChanged { get; init; }
+}
+
+/// <summary>
 /// 教学提示（对应 WinUI 2 的 <see cref="MuxControls.TeachingTip"/>）：
 /// 挂在某个控件旁边的一段说明，带一个指向它的小尾巴。
 /// </summary>

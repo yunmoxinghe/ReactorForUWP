@@ -241,6 +241,28 @@ internal static class SelectionGate
     }
 
     /// <summary>
+    /// 开关：控件在"未就绪"期间被点、进树复查时它却漂到了<b>无选中</b>（-1），
+    /// 这时要不要按用户那次点击的值补发。<b>默认开。</b>
+    /// </summary>
+    /// <remarks>
+    /// <b>关掉它必须 fail</b>（alpha.6 的 fix discipline）：关掉就是回到旧行为，
+    /// 而旧行为正是"点了没反应"的成因——完整链路见
+    /// <see cref="ShouldFlushDeferred"/> 的注释。
+    /// </remarks>
+    public static bool FlushWhenControlCleared { get; set; } = true;
+
+    /// <summary>
+    /// 开关：控件在"未就绪"期间被点、进树复查时它却停在<b>受控目标上</b>
+    /// （即被我们自己的下发或异步回写拉了回去），这时要不要仍按用户那次点击的值
+    /// 补发。<b>默认开。</b>
+    /// </summary>
+    /// <remarks>
+    /// 关掉它必须 fail（alpha.6 的 fix discipline）。
+    /// 完整链路见 <see cref="ShouldFlushDeferred"/> 里"我们自己拉回去的那一格"。
+    /// </remarks>
+    public static bool FlushWhenControlPulledBack { get; set; } = true;
+
+    /// <summary>
     /// 补发兑现前的复查：此刻还该不该把记下的那一发交给用户回调。
     /// </summary>
     /// <param name="pending">未就绪期间记下的值。</param>
@@ -252,16 +274,57 @@ internal static class SelectionGate
     /// 用户改了主意、受控值被下发收敛到位、控件被清空。
     /// 少了这道复查，补发就从"捡回丢失的点击"变成"制造一次凭空的点击"。
     /// <list type="bullet">
-    ///   <item><c>currentIndex != pending</c>：用户又点了别的值，用最新那次，旧的作废；</item>
-    ///   <item><c>currentIndex &lt; 0</c>：控件现在什么都没选中，没有可补的发；</item>
+    ///   <item><c>currentIndex</c> 停在<b>既不是 pending、也不是受控目标</b>的值上：
+    ///         用户又点了别的值，用最新那次，旧的作废；</item>
+    ///   <item><c>currentIndex == 受控目标</c>：<b>那不是用户的手，是我们自己的</b>
+    ///         ——受控下发或异步回写把它拉回去了。见下面的说明；</item>
+    ///   <item><c>currentIndex &lt; 0</c>：控件现在什么都没选中，
+    ///         但可补的发在 <c>pending</c> 里，不在控件上；</item>
     ///   <item><c>pending == controlledTarget</c>：期间受控下发已经把它收敛到位了，
     ///         再补发一次只会多调一次同值的 setState。</item>
     /// </list>
+    /// <para>
+    /// <b>2026-10 · INV14：为什么"停在受控目标上"不算用户改主意。</b>
+    /// 记下 pending 之后、<c>Loaded</c> 到来之前，中间还夹着一条异步队列：
+    /// 同一手势的"取消选中"那一发会排一次 <c>SelectionRestore</c>，
+    /// 它把控件写回<b>受控旧值</b>。于是复查时控件停在受控目标上，
+    /// 而 pending 是用户刚点的那个值——旧判据把它读成"用户改主意"，
+    /// 那一次点击就凭空消失了。
+    /// </para>
+    /// <para>
+    /// 用户看到的样子与 INV12 / INV13 完全一致：<b>点了没反应</b>。
+    /// 而且它同样躲过了终态类不变量——控件最后规规矩矩停在受控值上，
+    /// state 与控件一致，界面没有任何异常，只有用户知道他点的那一下没生效。
+    /// </para>
     /// </remarks>
     public static bool ShouldFlushDeferred(int pending, int currentIndex, int? controlledTarget)
     {
-        if (currentIndex < 0 || currentIndex != pending)
+        // pending<0 没有"用户选中了哪一项"这层意思，补发它等于凭空回调一个 -1。
+        if (pending < 0)
         {
+            return false;
+        }
+
+        if (currentIndex >= 0 && currentIndex != pending)
+        {
+            // 控件此刻停在受控目标上 ⇒ 把它放到那儿的是我们自己的下发 / 异步回写，
+            // 不是用户的手。用户并没有"改主意"这一动作，pending 仍然有效。
+            var pulledBackByUs = controlledTarget is int back && currentIndex == back;
+
+            if (!pulledBackByUs)
+            {
+                return false;
+            }
+
+            if (!FlushWhenControlPulledBack)
+            {
+                return false;
+            }
+        }
+
+        if (currentIndex < 0 && !FlushWhenControlCleared)
+        {
+            // 旧行为：控件停在"无选中"→ 判定没有可补的发，放弃。
             return false;
         }
 

@@ -50,6 +50,12 @@ internal sealed class TabViewHandler : ElementHandler<TabViewElement, WuControls
 
     private static readonly WeakTable<MuxControls.TabView, bool> RestorePending = new();
 
+    /// <summary>挂上去的两个委托（SelectionChanged / AddTabButtonClick），Unmount 要拿它们解绑。语义与 <c>RadioButtonsHandler.Handlers</c> 一致，详见那边的注释。</summary>
+    private static readonly WeakTable<
+        MuxControls.TabView,
+        (WuControls.SelectionChangedEventHandler? Selection,
+         Windows.Foundation.TypedEventHandler<MuxControls.TabView, object>? Add)> Handlers = new();
+
     protected override WuControls.Grid Mount(Reconciler reconciler, TabViewElement element)
     {
         var strip = new MuxControls.TabView
@@ -166,6 +172,22 @@ internal sealed class TabViewHandler : ElementHandler<TabViewElement, WuControls
         {
             SelectionEcho.Forget(strip);
             ReadyGate.Disarm(strip);
+
+            if (Handlers.TryGetValue(strip, out var attached))
+            {
+                if (attached.Selection is { } selection)
+                {
+                    strip.SelectionChanged -= selection;
+                }
+
+                if (attached.Add is { } add)
+                {
+                    strip.AddTabButtonClick -= add;
+                }
+
+                Handlers.Remove(strip);
+            }
+
             Callbacks.Remove(strip);
             Targets.Remove(strip);
             Rebuilding.Remove(strip);
@@ -272,29 +294,36 @@ internal sealed class TabViewHandler : ElementHandler<TabViewElement, WuControls
     private static void Rebind(
         MuxControls.TabView strip, Action<int>? selection, Action? add)
     {
-        if (!Callbacks.ContainsKey(strip))
+        if (!Handlers.ContainsKey(strip))
         {
             Callbacks[strip] = (null, null);
 
-            strip.SelectionChanged += (s, args) =>
+            WuControls.SelectionChangedEventHandler selectionHandler = (s, args) =>
             {
-                var view = (MuxControls.TabView)s;
-                if (Callbacks.TryGetValue(view, out var current))
+                // 用订阅时那个引用（<c>strip</c>）查表，不用 <c>sender</c>。
+                // 理由见 RadioButtonsHandler.Handlers 字段的注释。
+                if (Callbacks.TryGetValue(strip, out var current))
                 {
                     // 不管这一轮有没有人监听，四道判据与纠正都要跑：
                     // 它们兑现的是"受控"，不是"送达"。
-                    Dispatch(view, args, current.Selection);
+                    Dispatch(strip, args, current.Selection);
                 }
             };
 
-            strip.AddTabButtonClick += (s, _) =>
+            var addHandler =
+                new Windows.Foundation.TypedEventHandler<
+                    MuxControls.TabView,
+                    object>((s, _) =>
             {
-                var view = (MuxControls.TabView)s;
-                if (Callbacks.TryGetValue(view, out var current))
+                if (Callbacks.TryGetValue(strip, out var current))
                 {
                     current.Add?.Invoke();
                 }
-            };
+            });
+
+            strip.SelectionChanged += selectionHandler;
+            strip.AddTabButtonClick += addHandler;
+            Handlers.Set(strip, (selectionHandler, addHandler));
         }
 
         Callbacks[strip] = (selection, add);

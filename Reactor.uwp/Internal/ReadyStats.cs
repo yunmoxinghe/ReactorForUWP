@@ -31,13 +31,32 @@ internal static class ReadyStats
     /// </remarks>
     public static long AlreadyLoaded;
 
+    /// <summary>
+    /// 我们自己那份标记还是 <c>false</c>、但控件此刻 <c>IsLoaded</c> 已经是
+    /// <c>true</c> 的次数（即"错过 <c>Loaded</c> 事件、被即时查问救回来"的控件数）。
+    /// </summary>
+    /// <remarks>
+    /// 它和 <see cref="AlreadyLoaded"/> 是<b>两回事</b>，别合并：
+    /// <c>AlreadyLoaded</c> 记的是 <c>Arm</c> 那一刻撞见的中间态，
+    /// 这一条记的是 <c>Arm</c> <b>之后</b> 才被发现的——也就是"订阅已经挂上去、
+    /// 而 <c>Loaded</c> 永远不会来"的那一种（UWP/WinUI 的 <c>Loaded</c>/
+    /// <c>Unloaded</c> 有乱序与不配对的已知问题，见
+    /// <see cref="ReadyPolicy.IsReady"/> 的注释）。
+    /// <para>
+    /// 非 0 就说明这条失效模式在真机上真的发生过；沿用旧写法的话，这些控件的
+    /// 事件会<b>一发都不放行</b>，且不报任何错。
+    /// </para>
+    /// </remarks>
+    public static long Healed;
+
     public static void Reset()
     {
         Ready = 0;
         Suppressed = 0;
         AlreadyLoaded = 0;
+        Healed = 0;
     }
 
     public static string Snapshot() =>
-        $"ready={Ready} suppressed={Suppressed} alreadyLoaded={AlreadyLoaded}";
+        $"ready={Ready} suppressed={Suppressed} alreadyLoaded={AlreadyLoaded} healed={Healed}";
 }

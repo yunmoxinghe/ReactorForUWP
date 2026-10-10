@@ -269,10 +269,31 @@ internal sealed class ComboBoxHandler : ElementHandler<ComboBoxElement, ComboBox
     private static readonly WeakTable<ComboBox, bool> RestorePending = new();
 
     /// <summary>
+    /// 此刻是不是<b>我们自己在写</b> <c>SelectedIndex</c>（受控下发或异步回写）。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="Rebuilding"/> 同构，只是那道是给 <c>Selector</c> 的
+    /// <c>Items.Clear()</c> 用的，这道是给我们自己的写入用的。
+    /// <para>
+    /// <b>为什么非有它不可。</b>在"未就绪"的窗口里，我们写的和用户拨的会抛出
+    /// <b>值完全相同</b>的事件：受控目标正好是 1，我们把它写成 1 抛一发
+    /// <c>SelectedIndex=1</c>，用户把控件拨回 1 也抛一发 <c>SelectedIndex=1</c>。
+    /// 光看值分不开，可两者含义相反——前者是回声，后者是真实意图。
+    /// 少了这道旗标，"用户点回受控值"会被当成我们写的而<b>不记账</b>，
+    /// 于是先前记下的那一次<b>过期了却没作废</b>，进树时按过期的旧意图补发，
+    /// 把用户最后的选择整个盖掉（随机序列 #2478 复现的就是这一格）。
+    /// </para>
+    /// </remarks>
+    private static readonly WeakTable<ComboBox, bool> Applying = new();
+
+    /// <summary>
     /// 未就绪期间被吞掉、但值不是受控目标的那一发，记下来等进树补发。
     /// 判据见 <see cref="SelectionGate.ShouldDeferNotReady"/>。
     /// </summary>
     private static readonly WeakTable<ComboBox, int> Deferred = new();
+
+    /// <summary>挂在控件上的 <c>SelectionChanged</c> 委托（Unmount 要拿它解绑）。语义与 <c>RadioButtonsHandler.Handlers</c> 一致，详见那边的注释。</summary>
+    private static readonly WeakTable<ComboBox, SelectionChangedEventHandler?> Handlers = new();
 
     protected override ComboBox Mount(Reconciler reconciler, ComboBoxElement element)
     {
@@ -346,10 +367,18 @@ internal sealed class ComboBoxHandler : ElementHandler<ComboBoxElement, ComboBox
     {
         ReadyGate.Disarm(control);
         SelectionEcho.Forget(control);
+
+        if (Handlers.TryGetValue(control, out var handler) && handler is { } attached)
+        {
+            control.SelectionChanged -= attached;
+            Handlers.Remove(control);
+        }
+
         Callbacks.Remove(control);
         Targets.Remove(control);
         Rebuilding.Remove(control);
         RestorePending.Remove(control);
+        Applying.Remove(control);
         Deferred.Remove(control);
     }
 
@@ -429,7 +458,18 @@ internal sealed class ComboBoxHandler : ElementHandler<ComboBoxElement, ComboBox
             SelectionEcho.Expect(control, index);
         }
 
-        control.SelectedIndex = index;
+        // 窗必须关在 finally 上：写入抛异常时若窗永远开着，
+        // 该控件<b>之后所有</b>用户点击都会被判成"我们自己写的"→ 从此点了没反应。
+        // 与 Rebuilding 同律（契约第十五道：窗开了必须关，且关在 finally / Dispose 上）。
+        Applying.Set(control, true);
+        try
+        {
+            control.SelectedIndex = index;
+        }
+        finally
+        {
+            Applying.Set(control, false);
+        }
 
         // 写入完了再回头看一眼：这一发的回声到现在还没人来领就撤销登记。
         // 触发的情形比其余 handler 少——ComboBox 通常当场就被 Consume 掉——
@@ -499,6 +539,19 @@ internal sealed class ComboBoxHandler : ElementHandler<ComboBoxElement, ComboBox
                     ReactorLog.Gate(
                         $"ComboBox{tag} 未就绪但值 {value} 不是受控目标 → 记下，进树后补发");
                 }
+                else if (value >= 0
+                    && !(Applying.TryGetValue(control, out var ours) && ours)
+                    && Deferred.TryGetValue(control, out var stale))
+                {
+                    // 值等于受控目标 ⇒ 记不得（分不清是我们写的还是用户拨的），
+                    // 但若这一发<b>不是我们自己写出来的</b>，那就是用户亲手把控件
+                    // 拨回了受控目标——他改主意了，先前记下的那一次必须作废。
+                    // 不作废的后果：进树时按<b>过期的</b>旧意图补发，
+                    // 把用户最后的选择整个盖掉（INV15 / 随机序列 #2478）。
+                    Deferred.Remove(control);
+                    ReactorLog.Gate(
+                        $"ComboBox{tag} 用户拨回受控值 {value} → 作废记下的 {stale}");
+                }
             }
 
             return;
@@ -551,17 +604,20 @@ internal sealed class ComboBoxHandler : ElementHandler<ComboBoxElement, ComboBox
 
     private static void Rebind(ComboBox control, Action<int>? callback)
     {
-        if (!Callbacks.ContainsKey(control))
+        if (!Handlers.ContainsKey(control))
         {
-            Callbacks[control] = null;
-            control.SelectionChanged += (s, args) =>
+            SelectionChangedEventHandler handler = (s, args) =>
             {
-                var cb = (ComboBox)s;
-                if (Callbacks.TryGetValue(cb, out var current))
+                // 用订阅时那个引用（<c>control</c>）查表，不用 <c>sender</c>。
+                // 理由见 RadioButtonsHandler.Handlers 字段的注释。
+                if (Callbacks.TryGetValue(control, out var current))
                 {
-                    Dispatch(cb, args, current);
+                    Dispatch(control, args, current);
                 }
             };
+
+            control.SelectionChanged += handler;
+            Handlers.Set(control, handler);
         }
 
         Callbacks[control] = callback;
@@ -575,6 +631,13 @@ internal sealed class ToggleSwitchHandler : ElementHandler<ToggleSwitchElement, 
 
     /// <summary><c>IsOn</c> 受控：写回会触发 Toggled，需要回声抑制。</summary>
     private static readonly EchoGuard ToggleEcho = new();
+
+    /// <summary>
+    /// 挂在控件上的 <c>Toggled</c> 委托，Unmount 要拿它解绑。
+    /// 语义与 <c>RadioButtonsHandler.Handlers</c> 一致：它同时是"订阅过没有"
+    /// 的守卫，生命周期与订阅同起同落，重新挂载时不会再叠加一份委托。
+    /// </summary>
+    private static readonly WeakTable<ToggleSwitch, Windows.UI.Xaml.RoutedEventHandler> ToggledHandlers = new();
 
     protected override ToggleSwitch Mount(Reconciler reconciler, ToggleSwitchElement element)
     {
@@ -590,7 +653,13 @@ internal sealed class ToggleSwitchHandler : ElementHandler<ToggleSwitchElement, 
             toggle.IsOn = element.IsOn.Value;
         }
 
-        Rebind(toggle, element.OnIsOnChanged);
+        // 这里同样要挂 <c>Guard</c>，不能像以前那样直接把 <c>OnIsOnChanged</c>
+        // 塞进去：启动时通常只有 Mount、还没有 Update，于是首次 Update 之前
+        // 那一发点拨打的是<b>裸回调</b>——它不经过回声抑制（那段窗口里没有受控
+        // 写回，所以功能上没事），但也因此<b>不落 Pass 日志</b>，真机回归数出来
+        // 的第一发永远是 0 条，看着就像"点了没反应"。挂上 Guard 之后，
+        // 四条路径（Mount / Update / 正常 / 补发）的埋点就一致了。
+        Rebind(toggle, Guard(toggle, element.OnIsOnChanged));
         return toggle;
     }
 
@@ -631,6 +700,13 @@ internal sealed class ToggleSwitchHandler : ElementHandler<ToggleSwitchElement, 
 
     protected override void Unmount(Reconciler reconciler, ToggleSwitch control)
     {
+        // 先解绑再摘键：顺序反了就是"键没了、订阅还在"，重新挂载会再挂一份。
+        if (ToggledHandlers.TryGetValue(control, out var handler))
+        {
+            control.Toggled -= handler;
+            ToggledHandlers.Remove(control);
+        }
+
         ToggleEcho.Forget(control);
         Callbacks.Remove(control);
     }
@@ -659,17 +735,20 @@ internal sealed class ToggleSwitchHandler : ElementHandler<ToggleSwitchElement, 
 
     private static void Rebind(ToggleSwitch control, Action<bool>? callback)
     {
-        if (!Callbacks.ContainsKey(control))
+        if (!ToggledHandlers.ContainsKey(control))
         {
-            Callbacks[control] = null;
-            control.Toggled += (s, _) =>
+            Windows.UI.Xaml.RoutedEventHandler handler = (s, _) =>
             {
-                var toggle = (ToggleSwitch)s;
-                if (Callbacks.TryGetValue(toggle, out var current))
+                // 用订阅时那个引用（<c>control</c>）查表，不用 <c>sender</c>。
+                // 理由见 RadioButtonsHandler.Handlers 字段的注释。
+                if (Callbacks.TryGetValue(control, out var current))
                 {
-                    current?.Invoke(toggle.IsOn);
+                    current?.Invoke(control.IsOn);
                 }
             };
+
+            control.Toggled += handler;
+            ToggledHandlers[control] = handler;
         }
 
         Callbacks[control] = callback;
@@ -683,6 +762,17 @@ internal sealed class RadioButtonHandler : ElementHandler<RadioButtonElement, Ra
 
     /// <summary><c>IsChecked</c> 受控：写回会触发 Checked/Unchecked，需要回声抑制。</summary>
     private static readonly EchoGuard CheckEcho = new();
+
+    /// <summary>
+    /// 挂在控件上的两个委托（Checked / Unchecked），Unmount 要拿它们解绑。
+    /// 语义与 <c>RadioButtonsHandler.Handlers</c> 一致，详见那边的注释：
+    /// <b>它同时是"订阅过没有"的守卫</b>，生命周期与订阅同起同落，
+    /// 所以控件被重新挂载时只会摘差值，不会再叠加一份委托。
+    /// </summary>
+    private static readonly WeakTable<
+        RadioButton,
+        (Windows.UI.Xaml.RoutedEventHandler? Checked,
+         Windows.UI.Xaml.RoutedEventHandler? Unchecked)> Handlers = new();
 
     protected override RadioButton Mount(Reconciler reconciler, RadioButtonElement element)
     {
@@ -698,7 +788,10 @@ internal sealed class RadioButtonHandler : ElementHandler<RadioButtonElement, Ra
             radio.IsChecked = element.IsChecked.Value;
         }
 
-        Rebind(radio, element.OnIsCheckedChanged);
+        // 同 ToggleSwitch：这里也必须挂 <c>Guard</c>。启动时往往只有 Mount 没有
+        // Update，裸回调那一发既不受回声抑制、也不落 Pass 日志，真机回归数出来
+        // 就是"0 条回调"，与"点了没反应"无法区分。
+        Rebind(radio, Guard(radio, element.OnIsCheckedChanged));
         return radio;
     }
 
@@ -739,30 +832,60 @@ internal sealed class RadioButtonHandler : ElementHandler<RadioButtonElement, Ra
 
     protected override void Unmount(Reconciler reconciler, RadioButton control)
     {
+        // 先解绑再摘键：顺序反了就是"键没了、订阅还在"，重新挂载会再挂一份。
+        if (Handlers.TryGetValue(control, out var tuple))
+        {
+            if (tuple.Checked is { } onChecked)
+            {
+                control.Checked -= onChecked;
+            }
+
+            if (tuple.Unchecked is { } onUnchecked)
+            {
+                control.Unchecked -= onUnchecked;
+            }
+
+            Handlers.Remove(control);
+        }
+
         CheckEcho.Forget(control);
         Callbacks.Remove(control);
     }
 
+    /// <summary>
+    /// <c>IsChecked</c> 的变更只有 Checked / Unchecked 两个事件，回声抑制是唯一的
+    /// 闸门，所以闸门做的每个决策都要记下来——否则"点了之后到底有没有进回调"
+    /// 这一段是黑的，真机回归也就没法断言。四个受控控件里最后一个补上埋点的。
+    /// </summary>
     private static Action<bool>? Guard(RadioButton control, Action<bool>? callback) =>
         callback is null
             ? null
             : value =>
             {
+                var tag = CtlId.Tag(control);
+
                 if (CheckEcho.Consume(control, value))
                 {
+                    ReactorLog.Gate($"RadioButton{tag} 回声，吞 IsChecked={value}");
                     return;
                 }
 
+                ReactorLog.Pass($"RadioButton{tag} → 用户回调 IsChecked={value}");
                 callback(value);
             };
 
     private static void Rebind(RadioButton control, Action<bool>? callback)
     {
-        if (!Callbacks.ContainsKey(control))
+        if (!Handlers.ContainsKey(control))
         {
-            Callbacks[control] = null;
-            control.Checked += (s, _) => Invoke((RadioButton)s, true);
-            control.Unchecked += (s, _) => Invoke((RadioButton)s, false);
+            // 用订阅时那个引用（<c>control</c>），不用回调给的 <c>sender</c>。
+            // 理由见 RadioButtonsHandler.Handlers 字段的注释。
+            Windows.UI.Xaml.RoutedEventHandler onChecked = (s, _) => Invoke(control, true);
+            Windows.UI.Xaml.RoutedEventHandler onUnchecked = (s, _) => Invoke(control, false);
+
+            control.Checked += onChecked;
+            control.Unchecked += onUnchecked;
+            Handlers[control] = (onChecked, onUnchecked);
         }
 
         Callbacks[control] = callback;
@@ -816,11 +939,58 @@ internal sealed class RadioButtonsHandler : ElementHandler<RadioButtonsElement, 
     private static readonly WeakTable<MuxControls.RadioButtons, bool> RestorePending = new();
 
     /// <summary>
+    /// 此刻是不是<b>我们自己在写</b> <c>SelectedIndex</c>。语义与
+    /// <c>ComboBoxHandler.Applying</c> 完全一致，详见那边的注释。
+    /// </summary>
+    private static readonly WeakTable<MuxControls.RadioButtons, bool> Applying = new();
+
+    /// <summary>
     /// 未就绪期间被"未就绪"那道闸吞掉、但<b>值不是受控目标</b>的那一发。
     /// 记下来，等 <see cref="ReadyGate"/> 说它进树了再补发（判据见
     /// <see cref="SelectionGate.ShouldDeferNotReady"/>）。
     /// </summary>
     private static readonly WeakTable<MuxControls.RadioButtons, int> Deferred = new();
+
+    /// <summary>
+    /// 挂在控件上的那个 <c>SelectionChanged</c> 委托，<b>按控件留一份</b>。
+    /// </summary>
+    /// <remarks>
+    /// <b>为什么非存它不可。</b><c>Rebind</c> 靠 <c>if (!Callbacks.ContainsKey(control))</c>
+    /// 判断"这个控件的事件挂过没有"，而 <c>Unmount</c> 会摘掉 <c>Callbacks</c> 的键
+    /// （按控件建的表必须在 Unmount 摘掉，否则泄漏）。于是<b>键没了、订阅还在</b>：
+    /// 同一个控件一旦被<b>重新挂载</b>（复用原生控件、条件分支换 element 都走这条路），
+    /// 守卫判定"没挂过"，就<b>再挂一次</b>。此后每一发事件都跑两遍 <c>Dispatch</c>——
+    /// 日志成对、纠正成对、<b>用户回调也成对</b>（真机 <c>probe-realclick-0302.log</c>
+    /// 里 <c>RadioButtons#5</c> 那两条 <c>→ 用户回调 SelectedIndex=1</c> 就是它：
+    /// 点一次，回调两次）。
+    /// <para>
+    /// 修法是让"摘键"与"解绑"成对发生：<c>Unmount</c> 用这份委托真的 <c>-=</c>，
+    /// 于是重新挂载时挂上去的永远是<b>唯一</b>那一份。
+    /// 委托类型是 <c>SelectionChangedEventHandler</c>——出处见
+    /// <c>tools/winui2-ref/dev/RadioButtons/RadioButtons.cpp:378</c>：
+    /// <c>m_selectionChangedEventSource(*this, winrt::SelectionChangedEventArgs(…))</c>，
+    /// 事件源用的就是 <c>Windows::UI::Xaml::Controls</c> 那一套。
+    /// </para>
+    /// <para>
+    /// <b>第二条命：委托里查表必须用订阅时那个引用，不能用回调给的 <c>sender</c>。</b>
+    /// WinRT 不保证同一原生对象每次都交出同一个托管包装（RCW）：事件回调里的
+    /// <c>sender</c> 可能是<b>另一个包装</b>，而这张表按<b>引用相等</b>键控
+    /// （<c>ConditionalWeakTable</c>），于是 <c>TryGetValue(sender)</c> 查不到——
+    /// 委托静默返回，表现为<b>"点了没反应"，而且从此每次都这样</b>。
+    /// <br/>
+    /// 取证过程（<c>tools/uia/</c>）：DP 探针页显示每次点击后
+    /// <c>SelectedIndex</c> 依赖属性<b>确实跟着变了</b>，而
+    /// <c>RadioButtons.cpp:376-378</c> 里"设依赖属性"与"抛事件"是同一段代码——
+    /// 所以事件一定抛了，只是订阅这一侧按 sender 没查到键。
+    /// 同一轮日志里控件编号从 <c>#1</c> 跳到 <c>#2</c>（<c>CtlId</c> 按引用发号，
+    /// 号只增不减），就是那个新包装留下的指纹。
+    /// <br/>
+    /// 因此所有事件委托一律写成 <c>(s, args) => … control …</c>：
+    /// 用闭包捕获的 <c>control</c> 查表与派发，<c>sender</c> 一概不碰。
+    /// 有源码级契约守着这条（<c>tests/Reactor.Core.Tests</c> 的 sender 那条）。
+    /// </para>
+    /// </remarks>
+    private static readonly WeakTable<MuxControls.RadioButtons, SelectionChangedEventHandler?> Handlers = new();
 
     protected override MuxControls.RadioButtons Mount(
         Reconciler reconciler,
@@ -926,10 +1096,30 @@ internal sealed class RadioButtonsHandler : ElementHandler<RadioButtonsElement, 
     {
         ReadyGate.Disarm(control);
         SelectionEcho.Forget(control);
+
+        // 摘键必须<b>同时</b>解绑：只摘键不解绑，就等于宣布"这个控件的事件还没挂过"，
+        // 它一旦被重新挂载，Rebind 会再挂一次，此后每发事件跑两遍 Dispatch。
+        // 详见 Handlers 字段的注释。
+        if (Handlers.TryGetValue(control, out var handler) && handler is { } attached)
+        {
+            control.SelectionChanged -= attached;
+            Handlers.Remove(control);
+            ReactorLog.Trace(
+                ReactorLogChannel.Patch,
+                $"RadioButtons{CtlId.Tag(control)} 解订阅（Unmount）");
+        }
+        else
+        {
+            ReactorLog.Trace(
+                ReactorLogChannel.Patch,
+                $"RadioButtons{CtlId.Tag(control)} Unmount 时无订阅可解（Handlers 无键）");
+        }
+
         Callbacks.Remove(control);
         Targets.Remove(control);
         Rebuilding.Remove(control);
         RestorePending.Remove(control);
+        Applying.Remove(control);
         Deferred.Remove(control);
     }
 
@@ -1006,7 +1196,17 @@ internal sealed class RadioButtonsHandler : ElementHandler<RadioButtonsElement, 
             SelectionEcho.Expect(control, index);
         }
 
-        control.SelectedIndex = index;
+        // 同 ComboBox：窗必须关在 finally 上，否则写入抛异常后该控件
+        // 之后所有用户点击都会被判成"我们自己写的"（契约第十五道）。
+        Applying.Set(control, true);
+        try
+        {
+            control.SelectedIndex = index;
+        }
+        finally
+        {
+            Applying.Set(control, false);
+        }
 
         // 同 ComboBox / ToggleSwitch：写入完了若没等到回声，撤销登记。
         // 少了这一步，"受控 + 没给 OnSelectedIndexChanged" 的控件会把这次写入的
@@ -1086,6 +1286,19 @@ internal sealed class RadioButtonsHandler : ElementHandler<RadioButtonsElement, 
                     ReactorLog.Gate(
                         $"RadioButtons{tag} 未就绪但值 {value} 不是受控目标 → 记下，进树后补发");
                 }
+                else if (value >= 0
+                    && !(Applying.TryGetValue(control, out var ours) && ours)
+                    && Deferred.TryGetValue(control, out var stale))
+                {
+                    // 值等于受控目标 ⇒ 记不得（分不清是我们写的还是用户拨的），
+                    // 但若这一发<b>不是我们自己写出来的</b>，那就是用户亲手把控件
+                    // 拨回了受控目标——他改主意了，先前记下的那一次必须作废。
+                    // 不作废的后果：进树时按<b>过期的</b>旧意图补发，
+                    // 把用户最后的选择整个盖掉（INV15 / 随机序列 #2478）。
+                    Deferred.Remove(control);
+                    ReactorLog.Gate(
+                        $"RadioButtons{tag} 用户拨回受控值 {value} → 作废记下的 {stale}");
+                }
             }
 
             return;
@@ -1099,17 +1312,45 @@ internal sealed class RadioButtonsHandler : ElementHandler<RadioButtonsElement, 
 
     private static void Rebind(MuxControls.RadioButtons control, Action<int>? callback)
     {
-        if (!Callbacks.ContainsKey(control))
+        if (!Handlers.ContainsKey(control))
         {
-            Callbacks[control] = null;
-            control.SelectionChanged += (s, args) =>
+            // 委托留一份，Unmount 时才能真的 -=。
+            SelectionChangedEventHandler handler = (s, args) =>
             {
-                var rb = (MuxControls.RadioButtons)s;
-                if (Callbacks.TryGetValue(rb, out var current))
+                // 这里是 <b>WinUI 调用我们</b>的入口：跑出去的异常会冒进
+                // RadioButtons::Select 的栈里（它是靠 gsl::finally 复位
+                // m_currentlySelecting 的），有可能把那个内部标记留在 true 上，
+                // 从此这个控件再也不抛 SelectionChanged——表现为"点了没反应"。
+                // 异常必须在这里截住并记账，不能让它污染控件自己的状态机。
+                try
                 {
-                    Dispatch(rb, args, current);
+                    // 查表与派发一律用<b>订阅时那个引用</b>（<c>control</c>），
+                    // 不用回调给的 <c>sender</c>：见 <c>Handlers</c> 字段的注释。
+                    if (Callbacks.TryGetValue(control, out var current))
+                    {
+                        Dispatch(control, args, current);
+                    }
+                    else
+                    {
+                        ReactorLog.Warn(
+                            ReactorLogChannel.Input,
+                            $"RadioButtons{CtlId.Tag(control)} 收到事件但表里没它"
+                            + $"（sender 是另一个包装：{CtlId.Tag(s)}）");
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    ReactorLog.Error(
+                        ReactorLogChannel.Input,
+                        $"RadioButtons{CtlId.Tag(control)} 事件处理抛异常：{ex.GetType().Name}: {ex.Message}");
                 }
             };
+
+            control.SelectionChanged += handler;
+            Handlers.Set(control, handler);
+            ReactorLog.Trace(
+                ReactorLogChannel.Patch,
+                $"RadioButtons{CtlId.Tag(control)} 挂订阅（Handlers 无键）");
         }
 
         Callbacks[control] = callback;
@@ -1336,6 +1577,9 @@ internal abstract class ItemsViewHandler<TElement, TControl> : ElementHandler<TE
     private static readonly WeakTable<TControl, bool> Rebuilding = new();
     private static readonly WeakTable<TControl, bool> RestorePending = new();
 
+    /// <summary>挂上去的两个委托（<c>SelectionChanged</c> 与 <c>ItemClick</c>），Unmount 要拿它们解绑。语义与 <c>RadioButtonsHandler.Handlers</c> 一致，详见那边的注释。</summary>
+    private static readonly WeakTable<TControl, (SelectionChangedEventHandler? Selection, ItemClickEventHandler? Click)> Handlers = new();
+
     protected abstract IReadOnlyList<Element?> ItemsOf(TElement element);
     protected abstract Optional<int> SelectedIndexOf(TElement element);
     protected abstract Action<int>? SelectionCallbackOf(TElement element);
@@ -1457,6 +1701,22 @@ internal abstract class ItemsViewHandler<TElement, TControl> : ElementHandler<TE
     protected override void Unmount(Reconciler reconciler, TControl control)
     {
         SelectionEcho.Forget(control);
+
+        if (Handlers.TryGetValue(control, out var attached))
+        {
+            if (attached.Selection is { } selection)
+            {
+                control.SelectionChanged -= selection;
+            }
+
+            if (attached.Click is { } click)
+            {
+                control.ItemClick -= click;
+            }
+
+            Handlers.Remove(control);
+        }
+
         Callbacks.Remove(control);
         Targets.Remove(control);
         Rebuilding.Remove(control);
@@ -1575,28 +1835,33 @@ internal abstract class ItemsViewHandler<TElement, TControl> : ElementHandler<TE
 
     private static void Rebind(TControl control, Action<int>? selection, Action<int>? click)
     {
-        if (!Callbacks.ContainsKey(control))
+        if (!Handlers.ContainsKey(control))
         {
             Callbacks[control] = (null, null);
-            control.SelectionChanged += (s, args) =>
+
+            SelectionChangedEventHandler selectionHandler = (s, args) =>
             {
-                var view = (TControl)s;
-                if (Callbacks.TryGetValue(view, out var current))
+                // 用订阅时那个引用（<c>control</c>）查表，不用 <c>sender</c>。
+                // 理由见 RadioButtonsHandler.Handlers 字段的注释。
+                if (Callbacks.TryGetValue(control, out var current))
                 {
                     // 不管这一轮有没有人监听，四道判据与纠正都要跑：
                     // 它们兑现的是"受控"，不是"送达"。
-                    Dispatch(view, args, current.Selection);
+                    Dispatch(control, args, current.Selection);
                 }
             };
 
-            control.ItemClick += (s, e) =>
+            ItemClickEventHandler clickHandler = (s, e) =>
             {
-                var view = (TControl)s;
-                if (Callbacks.TryGetValue(view, out var current) && e.ClickedItem is UIElement clicked)
+                if (Callbacks.TryGetValue(control, out var current) && e.ClickedItem is UIElement clicked)
                 {
-                    current.Click?.Invoke(view.Items.IndexOf(clicked));
+                    current.Click?.Invoke(control.Items.IndexOf(clicked));
                 }
             };
+
+            control.SelectionChanged += selectionHandler;
+            control.ItemClick += clickHandler;
+            Handlers.Set(control, (selectionHandler, clickHandler));
         }
 
         Callbacks[control] = (selection, click);
@@ -1669,6 +1934,13 @@ internal sealed class NavigationViewHandler : ElementHandler<NavigationViewEleme
 
     /// <summary>每个导航条上当前挂着的搜索框（内容槽，见 <see cref="ApplySearchBox"/>）。</summary>
     private static readonly WeakTable<MuxControls.NavigationView, UIElement> SearchBoxes = new();
+
+    /// <summary>挂上去的三个委托（SelectionChanged / ItemInvoked / BackRequested），Unmount 要拿它们解绑。语义与 <c>RadioButtonsHandler.Handlers</c> 一致，详见那边的注释。</summary>
+    private static readonly WeakTable<
+        MuxControls.NavigationView,
+        (Windows.Foundation.TypedEventHandler<MuxControls.NavigationView, MuxControls.NavigationViewSelectionChangedEventArgs>? Selection,
+         Windows.Foundation.TypedEventHandler<MuxControls.NavigationView, MuxControls.NavigationViewItemInvokedEventArgs>? Invoked,
+         Windows.Foundation.TypedEventHandler<MuxControls.NavigationView, MuxControls.NavigationViewBackRequestedEventArgs>? Back)> Handlers = new();
 
     protected override MuxControls.NavigationView Mount(
         Reconciler reconciler,
@@ -1959,6 +2231,27 @@ internal sealed class NavigationViewHandler : ElementHandler<NavigationViewEleme
     {
         ReadyGate.Disarm(control);
         SelectionEcho.Forget(control);
+
+        if (Handlers.TryGetValue(control, out var attached))
+        {
+            if (attached.Selection is { } selection)
+            {
+                control.SelectionChanged -= selection;
+            }
+
+            if (attached.Invoked is { } invoked)
+            {
+                control.ItemInvoked -= invoked;
+            }
+
+            if (attached.Back is { } back)
+            {
+                control.BackRequested -= back;
+            }
+
+            Handlers.Remove(control);
+        }
+
         Callbacks.Remove(control);
         Targets.Remove(control);
         Rebuilding.Remove(control);
@@ -2032,11 +2325,15 @@ internal sealed class NavigationViewHandler : ElementHandler<NavigationViewEleme
         Action<int>? invoked,
         Action? back)
     {
-        if (!Callbacks.ContainsKey(control))
+        if (!Handlers.ContainsKey(control))
         {
             Callbacks[control] = (null, null, null);
 
-            control.SelectionChanged += (_, args) =>
+            // 三个委托都留一份：Unmount 要拿它们真的 -=（否则重新挂载会挂第二遍）。
+            var selectionHandler =
+                new Windows.Foundation.TypedEventHandler<
+                    MuxControls.NavigationView,
+                    MuxControls.NavigationViewSelectionChangedEventArgs>((_, args) =>
             {
                 // 菜单重建期间的事件作者是我们（依据见 Rebuilding 那段注释）。
                 // 受控不是送达：有没有人挂回调，这一道都得拦。
@@ -2068,11 +2365,14 @@ internal sealed class NavigationViewHandler : ElementHandler<NavigationViewEleme
                 {
                     current.Selection?.Invoke(index);
                 }
-            };
+            });
 
             // ItemInvoked 与 SelectionChanged 的区别：点已选中项也会触发，
             // 模板用它做"重复点击主页 → 回到主页"，SelectionChanged 不会回调。
-            control.ItemInvoked += (_, args) =>
+            var invokedHandler =
+                new Windows.Foundation.TypedEventHandler<
+                    MuxControls.NavigationView,
+                    MuxControls.NavigationViewItemInvokedEventArgs>((_, args) =>
             {
                 // 重建同样会走 ChangeSelection → RaiseItemInvoked，那一发也不是用户。
                 if (Rebuilding.TryGetValue(control, out var busy) && busy)
@@ -2098,15 +2398,23 @@ internal sealed class NavigationViewHandler : ElementHandler<NavigationViewEleme
                     : -1; // Settings 项没有我们写入的 Tag
 
                 current.Invoked?.Invoke(index);
-            };
+            });
 
-            control.BackRequested += (_, _) =>
+            var backHandler =
+                new Windows.Foundation.TypedEventHandler<
+                    MuxControls.NavigationView,
+                    MuxControls.NavigationViewBackRequestedEventArgs>((_, _) =>
             {
                 if (Callbacks.TryGetValue(control, out var current))
                 {
                     current.Back?.Invoke();
                 }
-            };
+            });
+
+            control.SelectionChanged += selectionHandler;
+            control.ItemInvoked += invokedHandler;
+            control.BackRequested += backHandler;
+            Handlers.Set(control, (selectionHandler, invokedHandler, backHandler));
         }
 
         Callbacks[control] = (selection, invoked, back);

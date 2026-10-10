@@ -55,16 +55,22 @@ public static partial class Factories
 
     /// <param name="isEditable">可编辑：收起时那个框变成输入框。</param>
     /// <param name="isTextSearchEnabled">敲字时跳到匹配的项（默认开）。</param>
+    /// <param name="header">标题（框上方那行小字）。官方 ComboBox 示例里几乎都有。</param>
+    /// <param name="placeholderText">没选任何项时框里的灰字。</param>
     public static ComboBoxElement ComboBox(
         string[] items,
         Optional<int> selectedIndex = default,
         Action<int>? onSelectedIndexChanged = null,
         bool isEditable = false,
-        bool isTextSearchEnabled = true) =>
+        bool isTextSearchEnabled = true,
+        string? header = null,
+        string? placeholderText = null) =>
         new(items, selectedIndex, onSelectedIndexChanged)
         {
             IsEditable = isEditable,
             IsTextSearchEnabled = isTextSearchEnabled,
+            Header = header,
+            PlaceholderText = placeholderText,
         };
 
     public static ToggleSwitchElement ToggleSwitch(
@@ -82,11 +88,13 @@ public static partial class Factories
         string? groupName = null) =>
         new(label, isChecked, onIsCheckedChanged, groupName);
 
+    /// <param name="header">标题（整组单选按钮上方那行小字）。</param>
     public static RadioButtonsElement RadioButtons(
         string[] items,
         Optional<int> selectedIndex = default,
-        Action<int>? onSelectedIndexChanged = null) =>
-        new(items, selectedIndex, onSelectedIndexChanged);
+        Action<int>? onSelectedIndexChanged = null,
+        string? header = null) =>
+        new(items, selectedIndex, onSelectedIndexChanged) { Header = header };
 
     // ── 进度与媒体 ─────────────────────────────────────────────
 

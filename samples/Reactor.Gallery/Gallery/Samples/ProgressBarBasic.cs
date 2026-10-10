@@ -37,16 +37,23 @@ public sealed class ProgressBarBasic : Component
                 Button(error ? "取消出错" : "标记出错", () => setError(!error)),
                 Button(paused ? "取消暂停" : "标记暂停", () => setPaused(!paused)),
                 TextBlock($"{value:F0} / 100")
+                    .Width(60)
+                    .TextAlignment(TextAlignment.Center)
                     .Caption().Subtle().VAlign(VerticalAlignment.Center)),
 
             TextBlock("确定进度").Caption().Subtle(),
-            ProgressBar(value, showError: error, showPaused: paused),
+            ProgressBar(value, showError: error, showPaused: paused)
+                .Width(130),
 
             TextBlock("不确定进度（Value 给 null）").Caption().Subtle(),
-            ProgressBar(null, showError: error, showPaused: paused),
+            ProgressBar(null, showError: error, showPaused: paused)
+                .Width(130)
+                .Margin(10, 10, 0, 0)
+                .VAlign(VerticalAlignment.Top),
 
             TextBlock("换个量程：Minimum = 0、Maximum = 1，值填 0.42").Caption().Subtle(),
-            ProgressBar(0.42, maximum: 1),
+            ProgressBar(0.42, maximum: 1)
+                .Width(130),
 
             TextBlock("不确定进度没有「完成」的概念，也别把它当成「0%」——"
                       + "它表达的是「在动、但不知道还要多久」。")

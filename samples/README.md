@@ -351,27 +351,108 @@ cppwinrt.exe -in "C:\Program Files (x86)\Windows Kits\10\UnionMetadata\10.0.2610
 设置项走的是 `NavigationView` 原生的那个（`IsSettingsVisible` 默认开着），
 它不在 `MenuItems` 里，`OnItemInvoked` 以 **-1** 回调认出它。
 
-分类：**按钮** / 文本与提示 / 输入与选择 / **日期与时间** / **命令与外壳**
-（含 `SwipeControl`，外加**命令条补完**的 `AppBarToggleButton` / `CommandBarFlyout` /
-`TextCommandBarFlyout`，外加**菜单补完**的 `ToggleMenuFlyoutItem` /
-`RadioMenuFlyoutItem` / `MenuFlyoutSubItem` 与**内容型**的 `Flyout`）
-/ 集合与虚拟化（`ListView` / `GridView` / 虚拟化长列表 /
-`ListBox` / `FlipView` / `TreeView`，外加**视图切换补完**的 `SemanticZoom` /
-`PipsPager`）/ **状态与信息**（`ProgressBar` / `ProgressRing` /
-`RefreshContainer`，外加**提示气泡**的 `ToolTip`）/ 布局与容器（`Grid` / `Border` / `Expander` / `TabView` / `Pivot` /
-`BreadcrumbBar` / `ScrollViewer` / `ContentDialog`，外加**布局补完**的
-`Canvas` / `Viewbox` / `VariableSizedWrapGrid` / `RelativePanel` / `ParallaxView`）/
-媒体、图像与图标（`Image` / `FontIcon` / `BitmapIcon` / `ImageIcon` /
-`PersonPicture`，外加**形状**的 `Ellipse` / `Rectangle` / `Line`），
-外加一份「写法指南」（整页级示例，住在 `Pages/`）。
-写法指南那 9 项是原来那些主题页，一个没删，只是搬到了索引里，于是它们也能被搜到。
+**分类照官方排。**官方画廊的导航由它仓库里那份 `ControlInfoData.json` 驱动；这里的
+分组 id、名称、**顺序**以及「哪个条目归哪一组」逐条对的是那份文件——在官方画廊里从
+*Collections* 点进 "FlipView"，在这里点开的是同一个位置。
+13 组控件条目（74 条）+ 1 组写法指南（9 条，整页形态、住在 `Pages/`）：
+
+| 官方分组 | 这里叫 | 条目 |
+|---|---|---|
+| Menus & toolbars | 命令与工具栏（8） | AppBarButton（含 AppBarSeparator）、AppBarToggleButton、CommandBar、CommandBarFlyout、TextCommandBarFlyout、MenuBar、MenuFlyout、SwipeControl |
+| Collections | 集合与虚拟化（7） | ListView、GridView、FlipView、ListBox、TreeView、ItemsRepeater（VirtualizingList）、PullToRefresh（RefreshContainer） |
+| Date & time | 日期与时间（4） | DatePicker、TimePicker、CalendarDatePicker、CalendarView |
+| Basic input | 基础输入（14） | Button、DropDownButton、SplitButton、ToggleButton、RepeatButton、ToggleSplitButton、HyperlinkButton、CheckBox、ToggleSwitch、ComboBox、RadioButton / RadioButtons、RatingControl、ColorPicker、Slider |
+| Text | 文本（7） | TextBlock、TextBox、RichTextBlock、RichEditBox、PasswordBox、AutoSuggestBox、NumberBox |
+| Status & info | 状态与信息（5） | InfoBar、InfoBadge、ProgressBar、ProgressRing、ToolTip |
+| Dialogs & flyouts | 对话框与浮出层（4） | ContentDialog、Flyout、TeachingTip、Popup |
+| Scrolling | 滚动与翻页（3） | ScrollViewer、SemanticZoom、PipsPager |
+| Layout | 布局（10） | Grid、Border、StackPanel、Canvas、RelativePanel、VariableSizedWrapGrid、Viewbox、Expander、SplitView、TwoPaneView |
+| Navigation | 导航（4） | NavigationView、Pivot、TabView、BreadcrumbBar |
+| Media | 媒体与图像（2） | Image、PersonPicture |
+| Styles | 样式与材质（5） | IconElement、Shape（Ellipse / Rectangle）、Line、AcrylicBrush、RadialGradientBrush |
+| Motion | 动效（1） | ParallaxView |
+| Fundamentals | 写法指南（9） | 快速开始、受控控件诊断、组件 props、原生逃生舱… |
+
+官方给 `AppBarSeparator` 单开一页，这里合进 AppBarButton 那条——它没有自己的状态，
+也没有任何值得单列演示的属性，单独成页只能得到一张静态截图。
+反过来 `ListBox` / `TextCommandBarFlyout` / `TwoPaneView` 是这条路上**多出来**的
+三条：UWP / WinUI 2 里有，官方画廊却没给独立页面，这里按「一控件一条目」照收。
+
+### 不适用清单：官方 19 组里这里没有的部分
+
+对齐做完，**剩下的差口是四回事**，逐条定性过，不是漏写：
+
+**① 本机契约里没有这个类型（WinUI 3 / WASDK 才有）。**
+实测口径：拿 `System.Reflection.Metadata` 遍历 `TypeDefinition`，
+`Microsoft.UI.Xaml.winmd`（WinUI 2）与
+`Windows.Foundation.UniversalApiContract.winmd`（UWP）**两份都查不到**
+（不靠记忆，也不靠字符串 contains——后者会把 `ScrollView` 当成
+`ScrollViewer` 的前缀命中）：
+`ItemsView` / `TableView` / `ScrollView` / `PagerControl` / `AnnotatedScrollBar`
+（官方 Collections、Scrolling 两组的主力）、
+`SelectorBar` / `LayoutPanel` / `WrapPanel`（Layout）、
+`SystemBackdrop` / `MicaBackdrop` / `DesktopAcrylicBackdrop`（Styles）、
+`ContentIsland`（System）。
+UWP 这一侧的材质答案就是 `AcrylicBrush` 与 pane background，已经在
+「样式与材质」那一组里。
+
+**② 不是 XAML 控件，是进程 / 系统级 API。**
+Windowing（AppWindow / Window / TitleBar / 各种 Presenter）、
+System（Clipboard / Storage pickers）、
+Shell（App / Badge notifications、JumpList）三组演示的是**能力**而不是控件：
+它们压根不进可视树，也没有「挂在父元素身上的子元素」这回事——
+本库没有把这些做成 UI 树的计划，硬凑一个条目等于演示一组与可视树无关的调用。
+
+**③ XAML 那套机制，声明式树上不存在。**
+Fundamentals（Resources / Style / Binding / Templates / Custom & User Controls /
+Scratch Pad / XAML Conditions）、Design（Color / Typography / Iconography /
+Geometry / Spacing）、Accessibility（Color Contrast / Keyboard Navigation /
+Screen Reader），以及 Motion 组那六项动画（Composition 互操作 /
+Connected Animation / Easing / Implicit / Page / Theme Transitions）——
+这里没有 `ResourceDictionary`、没有 `x:Bind`、没有 `ControlTemplate`，
+也没有 Storyboard 那一层。换上去的是「写法指南」那 9 项：同样回答
+"界面怎么写出来"，只是答案在这一侧。
+Design 与 Accessibility 两组的结论散在各条目自己的说明里
+（例如 TextBlock 那条讲的是字号层级）。
+
+**④ 类型是有的，本库还没包装——属于下一档差口，不是不适用。**
+同一份元数据里的另一半结论：`Popup`、`XamlUICommand`、`StandardUICommand`、
+`MediaPlayerElement`、`InkCanvas`、`MapControl`、`MediaCapture` 在 **UWP** 契约里
+存在；`RadialGradientBrush`、`AnimatedIcon`、`WebView2`、`AnimatedVisualPlayer`
+在 **WinUI 2** 里存在。这类差的是"包装"那一层而不是"画廊有没有条目"，
+所以这里**一度不给占位条目**——占位条目等于承认一个用不了的控件已经对齐了，
+落地才是真的对齐：元素 + handler + 样例 + 索引 + ApiMap，五件套一次一个控件。
+
+已落地的两个：
+`Popup`（UWP 原生 `Primitives.Popup`）与 `RadialGradientBrush`（WinUI 2 画笔），
+上面的表已经把它们算进各自那一组。两个都撞到了框架自己的边界，
+值得单独记一笔（见 `PopupHandler` 与 `Factories.Brushes` 的注释）：
+`Popup` 是 <b>FrameworkElement + <c>Child</c></b> 而不是 `ContentControl`——
+它炸出了协调器里一处**判据漂移**：「这个容器的子内容放在哪个属性」这件事，
+patch 侧（`PatchSingleChild`）问的是三级表（ContentControl → Border →
+`SingleChildAccessor` 登记表），卸载侧（`UnmountTree`）却只写了前两级。
+于是从登记表接入的五个容器在整棵子树被丢弃时，槽里的子树都不回收——
+里面组件的 cleanup 永远跑不到，`ComponentNode` 一直留在注册表里继续响应更新，
+外部表现就是"反复切页内存一直涨"。
+
+这个洞已经收在单一真源上：那张三级表抽成 `SingleChildAccessor.TryGetSlot`，
+两条路径都只能问它，补丁式的手写递归随之撤掉。受影响的
+`Viewbox` / `ParallaxView` / `SettingsExpander` / `SplitView` / `Popup`
+一并补上了；`SplitView.Pane` 与 `TwoPaneView` 的两个 pane 走新加的
+`ExtraSlotsOf`——多出来的槽由 handler 报给协调器，卸载时跟着主槽一起递归。
+回归由 `SingleSlotTests`（行为模型 + 源码级 invariant + line-level 变异反向对照）守着。
+`RadialGradientBrush` 则是本库<b>第一个落在 <c>Microsoft.UI.Xaml.Media</c> 下</b>
+的东西：刷子自己是 WinUI 2 的，`GradientStops` 是<b>只读</b>集合（攒一个新的赋回去
+编不过），而它收的成员反而全是 UWP 的——连 `InterpolationSpace` 用的都是合成层那个
+`CompositionColorSpace`（值只有 `Rgb` / `Hsl`，不是"线性 vs sRGB"）。
 
 `Pivot` 与 `TabView` 是刻意排在相邻位置的一对：同为分页容器，内容策略却相反——
 `TabView` 只在容器上留一份内容（切页签时 patch 同一棵树），`Pivot` 每页各挂一份
 （只有这样才能保住"内容跟着手势横移"那个过渡）。两边取舍都写在各自 handler 的注释里。
-`Pivot` 那份还要自己走一遍卸载：协调器的 `UnmountTree` 只替组件包装 /
-`Panel` + `ChildrenOf` / `SingleChildOf` 三种形状递归，"N 个 `PivotItem`、
-每个一份内容"三种都不是，不自己来则每页里的组件 cleanup 永远不跑。
+`Pivot` 那份还要自己走一遍卸载：协调器递归时认得的是四种形状
+（组件包装 / `Panel` + `ChildrenOf` / `SingleChildOf` / `ExtraSlotsOf`），
+"N 个 `PivotItem`、每个一份内容"四种都不是，不自己来则每页里的组件
+cleanup 永远不跑。
 
 「命令与外壳」那一族（`CommandBar` / `MenuBar` / `SplitView`）是同一条规矩的三个
 面孔：**子部件就地物化，不进协调器**。命令项（`AppBarButton`）与菜单项
@@ -379,9 +460,10 @@ cppwinrt.exe -in "C:\Program Files (x86)\Windows Kits\10\UnionMetadata\10.0.2610
 后者进了 `MenuFlyout.Items`，都不能再当可视树上的独立节点。所以它们与
 `RichTextBlock` 同路：元素是描述，宿主 handler 就地造。
 `SplitView` 反过来是**两个独立槽位**（`Pane` / `Content`），`Content` 借
-`SingleChildAccessor` 走协调器那条通用路径，`Pane` 由 handler 自己管；
-卸载同样要自己走一遍（理由同上：`SplitView` 继承 `Control`，`UnmountTree`
-认不出它）。
+`SingleChildAccessor` 走协调器那条通用路径；`Pane` 是主槽之外的第二个槽，
+不在 patch 那条通用路径上（由 handler 自己的 `ApplyPane` 处理），
+但通过 `ExtraSlotsOf` 报给协调器，卸载时跟着主槽一起递归——
+这跟 `TwoPaneView` 的两个 pane 是同一种处理。
 
 同一族里唯一的**例外**是内容型的 `Flyout`：它装的不是"项"而是<b>一棵子树</b>，
 所以走的是**另一条路**——进协调器，`Build` / `Patch` / 递归卸载三条一个不少。
@@ -580,8 +662,8 @@ cppwinrt.exe -in "C:\Program Files (x86)\Windows Kits\10\UnionMetadata\10.0.2610
 
 「浮层与双窗格」那一族（`TeachingTip` / `TwoPaneView`）是 WinUI 2 的两个真控件，
 共同点是**槽位/目标都不是"第一个子元素"那类隐式约定**：`TwoPaneView` 与
-`SplitView` 同形（`Pane1` / `Pane2` 两个独立槽位，都由 handler 自己管，
-`UnmountTree` 认不出 `Control` 型的容器）；`TeachingTip` 的 `Target` 要指向
+`SplitView` 同形（`Pane1` / `Pane2` 两个独立槽位）；它们连同 `SplitView.Pane`
+都改用 `ExtraSlotsOf` 报给协调器统一递归，不再是各 handler 手写——`TeachingTip` 的 `Target` 要指向
 **另一个元素**，而 XAML 靠 `x:Name` 拿到对象引用、声明式树里没有名字可给 ——
 所以它沿用 `RelativePanel` 那条规矩：填**同层下标**，进树之后（`Loaded`）
 再换成真正的兄弟控件（挂载那一刻还问不到 `Parent`）。

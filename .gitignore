@@ -58,3 +58,18 @@ Reactor.Uwp.Native/prebuilt/**/*.pdb
 # 第三方源码本地副本（只用于本地复核笔记里的行号，不入库）
 tools/winui2-ref/
 tools/ctk-ref/
+
+# Python 字节码缓存。tools/parity/probe_types.py 会 import 同目录的 coverage.py，
+# 一跑就生成 tools/parity/__pycache__/；那是运行产物，不该进 git status。
+__pycache__/
+*.pyc
+
+# 同上：第三方源码本地副本，不入库。
+# tools/parity/official/ 是 extract_official.py 从 WinUI 3 Gallery 抽出来的
+# <Control>.md（每个控件一段真正决定像素的 XAML），只用于对齐示例时查档位与行号。
+# 台账 docs/parity/winui3-gallery.md 记的是结论，不是原文，所以不靠它自证。
+tools/parity/official/
+
+# 调试探针归档：已从 samples/Reactor.Template 摘掉的 Probe*.cs，仅作取证样本留在
+# 本地，不进版本库（探针进主线的后果见 alpha.8「摘掉调试探针」那条提交）。
+tools/_probe-archive/

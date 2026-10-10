@@ -32,8 +32,9 @@ public sealed class GridViewBasic : Component
                 Optional<int>.Of(index),
                 setIndex,
                 ForEach(Tools, tool => VStack(6,
-                    FontIcon(tool.Glyph),
-                    TextBlock(tool.Name).Caption()))),
+                        FontIcon(tool.Glyph),
+                        TextBlock(tool.Name).Caption())
+                    .Margin(5))),
             TextBlock(index < 0 ? "没有选中项" : $"选中：{Tools[index].Name}")
                 .Caption()
                 .Subtle());

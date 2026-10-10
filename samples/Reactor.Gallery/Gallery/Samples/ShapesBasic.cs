@@ -8,11 +8,11 @@ using static Microsoft.UI.Reactor.Factories;
 namespace Reactor.Gallery.Samples;
 
 /// <summary>
-/// <c>Ellipse</c> / <c>Rectangle</c> / <c>Line</c>：画出来的几何。
+/// <c>Ellipse</c> / <c>Rectangle</c>：画出来的几何（<c>Line</c> 另有一条目）。
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>形状不是控件。</b>三者都是 <c>Windows.UI.Xaml.Shapes.Shape</c> 的派生：
+/// <b>形状不是控件。</b>两者都是 <c>Windows.UI.Xaml.Shapes.Shape</c> 的派生：
 /// 没有模板、没有内容、不接收焦点、Tab 走不到它身上（UIA 里也不报 Button 之类）。
 /// 它唯一做的事是"按这几个属性画一块几何"——要能点、能聚焦、能读屏，请用
 /// <c>Button</c> 套一个形状当内容，而不是指望形状自己变成按钮。
@@ -42,11 +42,31 @@ public sealed class ShapesBasic : Component
     /// </summary>
     private static readonly SolidColorBrush LineBrush = new(Colors.DimGray);
 
+    /// <summary>
+    /// 官方那一档的配色：<b>SteelBlue 填充 + 黑色描边</b>。
+    /// 做成静态字段：刷子按<b>引用</b>比，每轮 <c>new</c> 一支就是一次真的重绘。
+    /// </summary>
+    private static readonly SolidColorBrush SteelBlueFill = new(Colors.SteelBlue);
+    private static readonly SolidColorBrush BlackStroke = new(Colors.Black);
+
     public override Element Render()
     {
         var accent = ThemeResource.Brush("AccentFillColorDefaultBrush");
 
         return VStack(16,
+            TextBlock("基础档（官方）：SteelBlue 填充 + 黑色描边").Body(),
+            HStack(12,
+                Cell("椭圆", Ellipse()
+                    .Fill(SteelBlueFill)
+                    .Stroke(BlackStroke)
+                    .StrokeThickness(2)
+                    .Size(64, 64)),
+                Cell("矩形", Rectangle()
+                    .Fill(SteelBlueFill)
+                    .Stroke(BlackStroke)
+                    .StrokeThickness(2)
+                    .Size(64, 64))),
+
             TextBlock("椭圆（正圆 = 宽高相等）").Body(),
             HStack(12,
                 Cell("实心", Ellipse().Fill(accent).Size(64, 64)),
@@ -77,20 +97,12 @@ public sealed class ShapesBasic : Component
                     .Radius(24, 8)
                     .Size(64, 64))),
 
-            TextBlock("直线（只有描边；端帽在两端各有一个属性）").Body(),
-            VStack(8,
-                Line(0, 8, 220, 8).Stroke(LineBrush).StrokeThickness(2),
-                Line(0, 8, 220, 8)
-                    .Stroke(LineBrush)
-                    .StrokeThickness(8)
-                    .StrokeStartLineCap(PenLineCap.Round)
-                    .StrokeEndLineCap(PenLineCap.Triangle),
-                Line(0, 8, 220, 8).Stroke(LineBrush).StrokeThickness(2).StrokeDashArray(6, 4),
-                Line(0, 8, 220, 8)
-                    .Stroke(LineBrush)
-                    .StrokeThickness(2)
-                    .StrokeDashArray(6, 4)
-                    .StrokeDashOffset(3)),
+            TextBlock("描边那一套（虚线段长、偏移、端帽、拐角接法）在椭圆、矩形、"
+                      + "直线三者上<b>完全同形</b>——官方把它们放在 Shape 基类上。"
+                      + "直线的演示见「Line」那一条目。")
+                .Caption()
+                .Subtle()
+                .Wrap(),
 
             TextBlock("虚线的段长按<b>内容</b>比（[6,4] 与下一轮新写的 [6,4] 算同一份），"
                       + "所以每轮重渲染都会 new 一个数组的写法不会让描边每帧重建。")

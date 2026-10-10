@@ -28,19 +28,51 @@ public sealed class InfoBadgeBasic : Component
     {
         return VStack(14,
             TextBlock("数字与圆点").Caption().Subtle(),
-            HStack(12,
+            HStack(20,
                 Cell("圆点（Value = -1）", InfoBadge()),
                 Cell("数字 5", InfoBadge(5)),
                 Cell("数字 99+", InfoBadge(99)),
-                Cell("图标", InfoBadge(icon: FontIcon("\uE8BD")))),
+                Cell("图标", InfoBadge(icon: FontIcon("\uE8BD"))))
+                .HAlign(HorizontalAlignment.Center),
 
             TextBlock("预设样式").Caption().Subtle(),
-            HStack(12,
+            HStack(20,
                 Cell("Informational", InfoBadge(7)),
                 Cell("Success", InfoBadge(7, badgeStyle: "Success")),
                 Cell("Warning", InfoBadge(7, badgeStyle: "Warning")),
                 Cell("Critical", InfoBadge(7, badgeStyle: "Critical")),
-                Cell("Attention", InfoBadge(7, badgeStyle: "Attention"))),
+                Cell("Attention", InfoBadge(7, badgeStyle: "Attention")))
+                .HAlign(HorizontalAlignment.Center),
+
+            TextBlock("Attention 那一档的三种形态（图标 / 数字 / 圆点）").Caption().Subtle(),
+            HStack(20,
+                Cell("图标", InfoBadge(icon: FontIcon("\uE8BD"), badgeStyle: "Attention")),
+                Cell("数字 10", InfoBadge(10, badgeStyle: "Attention")),
+                Cell("圆点", InfoBadge(badgeStyle: "Attention")))
+                .HAlign(HorizontalAlignment.Center),
+            TextBlock("三种形态的差别<b>只在内容</b>（给图标 / 给数字 / 什么都不给），"
+                      + "预设样式都是 Attention——数值本身与样式是两件事。")
+                .Caption()
+                .Subtle()
+                .Wrap(),
+
+            TextBlock("挂在 Button 的右上角（宿主是一个 Button）").Caption().Subtle(),
+            Button(
+                    Grid(
+                        new[] { "*" },
+                        new[] { "*" },
+                        SymbolIcon(Windows.UI.Xaml.Controls.Symbol.Sync).Center(),
+                        InfoBadge(icon: FontIcon("\uE946"))
+                            .HAlign(HorizontalAlignment.Right)
+                            .VAlign(VerticalAlignment.Top)
+                            .Background(Windows.UI.Color.FromArgb(255, 0xC4, 0x2B, 0x1C))))
+                .Size(200, 60)
+                .HAlign(HorizontalAlignment.Center),
+            TextBlock("整枚按钮就是宿主：里面的符号居中，徽章压在右上角，"
+                      + "背景那一抹红是自己给的（官方示例里的 #C42B1C），不来自预设样式。")
+                .Caption()
+                .Subtle()
+                .Wrap(),
 
             TextBlock("挂在别人身上（放进同一个 Grid 的右上角）").Caption().Subtle(),
             Grid(

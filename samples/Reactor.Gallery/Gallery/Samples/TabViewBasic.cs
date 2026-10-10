@@ -61,7 +61,8 @@ public sealed class TabViewBasic : Component
                 },
                 Optional<int>.Of(index),
                 setIndex,
-                content: contents[index].Padding(0, 12, 0, 0)),
+                content: contents[index].Padding(0, 12, 0, 0),
+                isAddTabButtonVisible: true),
 
             TextBlock("页签宽度").Caption().Subtle(),
             TabView(

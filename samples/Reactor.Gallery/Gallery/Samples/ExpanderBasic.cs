@@ -23,11 +23,15 @@ public sealed class ExpanderBasic : Component
         VStack(8,
             Expander(
                 header: "点一下展开",
-                isExpanded: true,
+                isExpanded: false,
                 content: TextBlock("展开区放任意内容，不只是设置项。").Wrap()),
+            // 官方第二条是 500 宽、Padding 归零：内容自己贴到边上去，
+            // 不留 Expander 默认那一圈内边距。
             Expander(
                 header: "带图标",
                 headerIcon: FontIcon("\uE713"),
                 content: TextBlock("图标会与标题横排（WinUI 2 的 Expander 没有独立的 HeaderIcon 槽，这里拼进 Header 内容）。")
-                    .Wrap()));
+                    .Wrap())
+                .Width(500)
+                .Padding(0));
 }

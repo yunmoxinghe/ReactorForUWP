@@ -357,6 +357,12 @@ public abstract partial class ReactorApplication : WindowsUIApplication,
         {
             Resources.MergedDictionaries.Add(new XamlControlsResources());
         }
+
+        // WinUI 2 的原生实现是 MSIX 框架包（不在 AppX 里），而 PackageDependency 只有
+        // MinVersion、锁不住上限 —— NuGet 基线版本不等于实际加载的那份。放在这里
+        // （WinUI 初始化之后、首帧之前）落一行，排查时一眼能看到"这次跑的是哪一份"，
+        // A/B 对照的版本轴才是显式的。详见 RuntimeDiagnostics 的备注。
+        ReactorLog.Info(ReactorLogChannel.Host, $"RUNTIME {RuntimeDiagnostics.Report()}");
     }
 
     /// <summary>

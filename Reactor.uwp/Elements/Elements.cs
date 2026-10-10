@@ -63,6 +63,32 @@ public sealed record InfoBarElement(
     /// 手段是 <c>InfoBar</c> 上没有的（要改模板），别指望这一个开关。
     /// </remarks>
     public bool IsIconVisible { get; init; } = true;
+
+    /// <summary>
+    /// 标题：消息上方那行加粗的短句（XAML 的 <c>Title</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 官方 InfoBar 示例里几乎<b>条条都有</b>标题，本版之前缺这一项，
+    /// 所以画廊对不上官方那一排的形态。给 <c>null</c> 就是"不显示标题"
+    /// （官方模板里标题那一块是折叠的，不是留白）。
+    /// </remarks>
+    public string? Title { get; init; }
+
+    /// <summary>
+    /// 开合。<b>它是"种子值"，不是受控值</b>：只在挂载那一刻写一次，之后归控件自己。
+    /// </summary>
+    /// <remarks>
+    /// 用户按了关闭按钮之后，<c>IsOpen</c> 会变成 <c>false</c>；这时候下一轮重渲染
+    /// <b>不该</b>把它重新打开——那不是"状态同步"，那是把用户的操作撤回。
+    /// 因此这里<b>不进 <c>Update</c></b>（见 <c>InfoBarHandler</c> 的注释）。
+    /// 默认 <c>true</c>：不给就是"显示出来"。
+    /// </remarks>
+    public bool IsOpen { get; init; } = true;
+
+    /// <summary>
+    /// 用户能不能把它关掉（右上角那个 ×，XAML 的 <c>IsClosable</c>，官方默认 <c>false</c>）。
+    /// </summary>
+    public bool IsClosable { get; init; }
 }
 
 /// <summary>

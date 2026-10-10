@@ -1,13 +1,275 @@
 using System;
+using System.Collections.Generic;
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Reactor.Uwp.Hosting;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
+using Windows.UI.Xaml.Controls.Primitives;
 using MuxControls = Microsoft.UI.Xaml.Controls;
 
 namespace Reactor.Uwp.Internal;
 
+/// <summary>
+/// UWP 原生 <c>Popup</c>：一块盖在最上层的任意内容，受控 <c>IsOpen</c>。
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>单槽容器：登记一次就够了。</b>它继承 <c>FrameworkElement</c>、内容在
+/// <c>Child</c> 上，既不是 <c>ContentControl</c> 也不是 <c>Border</c>，
+/// 所以在 <c>SingleChildAccessor</c> 里给 <c>Popup</c> 登记一个访问器即可
+/// （同 <c>Viewbox</c> / <c>ParallaxView</c>，见 <c>ElementHandlerRegistry</c>）。
+/// 那条路的 patch 侧与卸载侧现在都问同一张表，因此这里<b>不再</b>需要
+/// 手写递归卸载——写过一次，但那是给"卸载侧少一级"这个公共路径的洞打补丁：
+/// 洞已经收进单一真源（见 <c>SingleChildAccessor</c> 的类注释），补丁就必须跟着撤，
+/// 否则同一次卸载会走两遍。
+/// </para>
+/// <para>
+/// <b><c>Opened</c> / <c>Closed</c> 都接到同一个受控回调上。</b>官方这两个事件
+/// 说的是同一件事的两半，这里把它们合成元素上那一个 <c>OnIsOpenChanged</c>
+/// （与 <c>TeachingTip</c> 那条同形），并且<b>只在一个方法里加工回执</b>——
+/// 一个守卫拆成两处 <c>Consume</c> 会让回声契约对"少了其中一条"失去视力，
+/// 详见 <c>RebindIsOpen</c> 的注释。
+/// </para>
+/// <para>
+/// 下面那行注释是给静态检查看的：<c>Child</c> 是<b>子槽</b>而不是配置属性，
+/// 它的更新走 <c>PatchSingleChild</c> 那条通用路径，所以不会出现在
+/// <c>Update</c> 里——<c>PropertyDriftTests</c> 认这个登记，没有它就会报警。
+/// </para>
+/// </remarks>
+// MOUNT-ONLY: Child
+internal sealed class PopupHandler : ElementHandler<PopupElement, Popup>
+{
+    private static readonly EchoGuard IsOpenEcho = new();
+
+    private static readonly WeakTable<Popup, EventHandler<object>> Openeds = new();
+
+    private static readonly WeakTable<Popup, EventHandler<object>> Closeds = new();
+
+    private static readonly WeakTable<Popup, RoutedEventHandler> Loadeds = new();
+
+    /// <summary>最近一次下发的槽位（目标下标 + 内容元素）。</summary>
+    private static readonly WeakTable<Popup, (int? TargetIndex, Element? Child)> Slots = new();
+
+    protected override Popup Mount(Reconciler reconciler, PopupElement element)
+    {
+        var control = new Popup
+        {
+            IsLightDismissEnabled = element.IsLightDismissEnabled,
+        };
+
+        ApplyProps(control, null, element);
+
+        if (element.IsOpen is { } open)
+        {
+            control.IsOpen = open;
+        }
+
+        if (element.Child is not null)
+        {
+            control.Child = reconciler.Build(element.Child);
+        }
+
+        Slots.Set(control, (element.TargetIndex, element.Child));
+
+        // 一次性订阅，理由与 TeachingTipHandler 一致：Target 要等进了可视树
+        // 才问得出 Parent（Mount 那一刻控件还没挂上去）。
+        RoutedEventHandler loaded = (_, _) => ApplyTarget(control, Slots[control].TargetIndex);
+        control.Loaded += loaded;
+        Loadeds.Set(control, loaded);
+
+        RebindIsOpen(control, element.OnIsOpenChanged);
+        return control;
+    }
+
+    protected override void Update(
+        Reconciler reconciler,
+        PopupElement oldElement,
+        PopupElement newElement,
+        Popup control)
+    {
+        // 罩静默窗的理由与 TeachingTip 那条一字不差：这些属性理论上牵不动
+        // IsOpen，但"窗没等到事件"的代价是零，漏罩则是一发假回调。
+        using (IsOpenEcho.Silence(control))
+        {
+            ApplyProps(control, oldElement, newElement);
+            ApplyTarget(control, newElement.TargetIndex);
+        }
+
+        reconciler.PatchSingleChild(control, oldElement.Child, newElement.Child);
+        Slots.Set(control, (newElement.TargetIndex, newElement.Child));
+
+        RebindIsOpen(control, newElement.OnIsOpenChanged);
+
+        if (newElement.IsOpen is not { } target || control.IsOpen == target)
+        {
+            return;
+        }
+
+        ReactorLog.Info(
+            ReactorLogChannel.Patch,
+            $"受控下发 Popup{CtlId.Tag(control)}: {control.IsOpen} → {target}");
+
+        IsOpenEcho.Expect(control, target);
+        control.IsOpen = target;
+
+        // 回调为空时订阅不存在，这一发没人领 → 撤销登记。
+        IsOpenEcho.CancelIfUnconsumed(control);
+    }
+
+    protected override void Unmount(Reconciler reconciler, Popup control)
+    {
+        IsOpenEcho.Forget(control);
+
+        if (Loadeds[control] is { } loaded)
+        {
+            control.Loaded -= loaded;
+            Loadeds.Remove(control);
+        }
+
+        if (Openeds[control] is { } opened)
+        {
+            control.Opened -= opened;
+            Openeds.Remove(control);
+        }
+
+        if (Closeds[control] is { } closed)
+        {
+            control.Closed -= closed;
+            Closeds.Remove(control);
+        }
+
+        // 槽里的子树由 UnmountTree 的通用路径递归 —— 这里只收本类型的静态状态。
+        Slots.Remove(control);
+    }
+
+    protected override Element? SingleChildOf(PopupElement element) => element.Child;
+
+    /// <summary>
+    /// 把"同层第几个"换成真正的兄弟控件。
+    /// </summary>
+    /// <remarks>
+    /// 与 <c>TeachingTipHandler.ApplyTarget</c> 同形：父容器还没确定就跳过
+    /// （那时 <c>Loaded</c> 会再来一次），下标越界给 null。
+    /// </remarks>
+    private static void ApplyTarget(Popup popup, int? index)
+    {
+        if (index is not { } i || popup.Parent is not Panel panel)
+        {
+            return;
+        }
+
+        popup.PlacementTarget = i >= 0 && i < panel.Children.Count ? panel.Children[i] as FrameworkElement : null;
+    }
+
+    private static void ApplyProps(Popup popup, PopupElement? oldElement, PopupElement newElement)
+    {
+        PropWriter.Set(
+            oldElement?.IsLightDismissEnabled ?? default,
+            newElement.IsLightDismissEnabled,
+            value => popup.IsLightDismissEnabled = value);
+
+        // 这三个都是"给了才写"：官方各自有默认值，抄一个数字进来就是把
+        // 一个可能随版本调整的值当成契约（与 NavigationView 的两个响应式阈值
+        // 同一条纪律）。
+        PropWriter.Set(
+            oldElement?.ShouldConstrainToRootBounds,
+            newElement.ShouldConstrainToRootBounds,
+            value =>
+            {
+                if (value is { } constrain)
+                {
+                    popup.ShouldConstrainToRootBounds = constrain;
+                }
+            });
+
+        PropWriter.Set(
+            oldElement?.HorizontalOffset,
+            newElement.HorizontalOffset,
+            value =>
+            {
+                if (value is { } dx)
+                {
+                    popup.HorizontalOffset = dx;
+                }
+            });
+
+        PropWriter.Set(
+            oldElement?.VerticalOffset,
+            newElement.VerticalOffset,
+            value =>
+            {
+                if (value is { } dy)
+                {
+                    popup.VerticalOffset = dy;
+                }
+            });
+
+        PropWriter.Set(
+            oldElement?.DesiredPlacement,
+            newElement.DesiredPlacement,
+            value =>
+            {
+                if (value is { } placement)
+                {
+                    popup.DesiredPlacement = placement;
+                }
+            });
+    }
+
+    /// <summary>
+    /// <c>Opened</c> 与 <c>Closed</c> 合成一个受控出口。
+    /// </summary>
+    /// <remarks>
+    /// <b>两个事件 → 一处回执加工。</b>它们说的是同一件事的两半（"开了" / "关了"），
+    /// 这里合成元素上那一个 <c>OnIsOpenChanged</c>。之所以要合成到同一个方法里，
+    /// 除了避免两个 lambda 各写一遍，还有一条硬的：本库的回声契约按
+    /// <b>守卫 + 消费点</b>记账，一个守卫拆成两处 <c>Consume</c> 之后，
+    /// 抹掉其中任何一处都不会让那条契约报警（另一处还在替它答到）——
+    /// 于是"少了一条回执"这件事<b>在静态检查里是看不见的</b>。
+    /// 集中到 <see cref="Feedback"/> 一处，这条契约才又盯得住它。
+    /// </remarks>
+    private static void RebindIsOpen(Popup control, Action<bool>? callback)
+    {
+        if (Openeds[control] is { } existingOpened)
+        {
+            control.Opened -= existingOpened;
+            Openeds.Remove(control);
+        }
+
+        if (Closeds[control] is { } existingClosed)
+        {
+            control.Closed -= existingClosed;
+            Closeds.Remove(control);
+        }
+
+        if (callback is null)
+        {
+            return;
+        }
+
+        EventHandler<object> opened = (_, _) => Feedback(control, callback, true);
+        EventHandler<object> closed = (_, _) => Feedback(control, callback, false);
+
+        control.Opened += opened;
+        control.Closed += closed;
+        Openeds.Set(control, opened);
+        Closeds.Set(control, closed);
+    }
+
+    /// <summary>
+    /// <c>IsOpen</c> 唯一的回执加工点：认得出回声就吞掉，认不出才往外报。
+    /// </summary>
+    private static void Feedback(Popup control, Action<bool> callback, bool value)
+    {
+        if (IsOpenEcho.Consume(control, value))
+        {
+            return;
+        }
+
+        callback(value);
+    }
+}
 /// <summary>
 /// WinUI 2 的 <c>TeachingTip</c>：挂在某个控件旁边的一段说明，受控 <c>IsOpen</c>。
 /// </summary>
@@ -354,19 +616,7 @@ internal sealed class TwoPaneViewHandler : ElementHandler<TwoPaneViewElement, Mu
 
     protected override void Unmount(Reconciler reconciler, MuxControls.TwoPaneView control)
     {
-        if (Slots.TryGetValue(control, out var slots))
-        {
-            if (control.Pane1 is UIElement pane1)
-            {
-                reconciler.UnmountNative(pane1, slots.Pane1 ?? EmptyElement.Instance);
-            }
-
-            if (control.Pane2 is UIElement pane2)
-            {
-                reconciler.UnmountNative(pane2, slots.Pane2 ?? EmptyElement.Instance);
-            }
-        }
-
+        // 两个 pane 都由协调器收（见下面的 ExtraSlotsOf）——这里只管本类型自己的状态。
         Slots.Remove(control);
 
         if (Handlers[control] is { } existing)
@@ -374,6 +624,37 @@ internal sealed class TwoPaneViewHandler : ElementHandler<TwoPaneViewElement, Mu
             control.ModeChanged -= existing;
             Handlers.Remove(control);
         }
+    }
+
+    /// <summary>
+    /// <c>Pane1</c> / <c>Pane2</c>：与 <c>SplitView</c> 同形的两个独立槽位。
+    /// </summary>
+    /// <remarks>
+    /// 它们既不在主槽上（这个类型没有 <c>SingleChildOf</c>），也进不了
+    /// <c>ChildrenOf</c>——所以由这里报给协调器，卸载时跟着一起递归；
+    /// 以前是 <c>Unmount</c> 里手写的，现在归到通用路径那一处。
+    /// </remarks>
+    protected override IReadOnlyList<(UIElement Native, Element? Element)> ExtraSlotsOf(
+        MuxControls.TwoPaneView control)
+    {
+        if (!Slots.TryGetValue(control, out var slots))
+        {
+            return Array.Empty<(UIElement, Element?)>();
+        }
+
+        var list = new List<(UIElement, Element?)>(2);
+
+        if (control.Pane1 is { } pane1)
+        {
+            list.Add((pane1, slots.Pane1));
+        }
+
+        if (control.Pane2 is { } pane2)
+        {
+            list.Add((pane2, slots.Pane2));
+        }
+
+        return list;
     }
 
     private static void ApplyProps(

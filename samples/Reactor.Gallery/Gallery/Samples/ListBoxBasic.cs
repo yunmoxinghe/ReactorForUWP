@@ -45,6 +45,7 @@ public sealed class ListBoxBasic : Component
                     setTrace(i < 0 ? "单选 → 被清空了" : $"单选 → 第 {i} 项：{Names[i]}");
                 },
                 ForEach(Names, name => TextBlock(name)))
+                .Width(400)
                 .Height(150),
             HStack(12,
                 Button("清空选择", () => setIndex(-1)),
@@ -58,6 +59,7 @@ public sealed class ListBoxBasic : Component
                 i => setTrace($"多选 → 回调给的是下标 {i}"),
                 SelectionMode.Multiple,
                 ForEach(Names, name => TextBlock(name)))
+                .Width(400)
                 .Height(140),
             TextBlock("Ctrl 点可以加选 / 减选；回调只给一个下标，不是集合。")
                 .Caption().Subtle().Wrap(),
@@ -68,6 +70,7 @@ public sealed class ListBoxBasic : Component
                 i => setTrace($"扩展 → 回调给的是下标 {i}"),
                 SelectionMode.Extended,
                 ForEach(Names, name => TextBlock(name)))
+                .Width(400)
                 .Height(140),
             TextBlock("与 Multiple 的差别在手势：Ctrl 加选、Shift 选一段。")
                 .Caption().Subtle().Wrap(),

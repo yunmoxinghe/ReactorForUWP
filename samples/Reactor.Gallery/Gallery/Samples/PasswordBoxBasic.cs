@@ -32,7 +32,8 @@ public sealed class PasswordBoxBasic : Component
                 Optional<string>.Of(pwd),
                 setPwd,
                 placeholderText: "随便输点什么",
-                header: "密码"),
+                header: "密码")
+                .Width(300),
 
             TextBlock($"已输入 {pwd.Length} 个字符（内容不上屏）").Caption().Subtle(),
 
@@ -48,7 +49,9 @@ public sealed class PasswordBoxBasic : Component
                 setPwd,
                 placeholderText: "同一个 state，另一副面具",
                 header: "星号掩码",
-                passwordChar: "*"),
+                passwordChar: "*")
+                .Width(250)
+                .Margin(right: 8),
             TextBlock("遮罩只在<b>显示层</b>：两个框共用一份 state，"
                       + "换的是面具不是内容——「Password」里存的始终是明文。")
                 .Wrap()

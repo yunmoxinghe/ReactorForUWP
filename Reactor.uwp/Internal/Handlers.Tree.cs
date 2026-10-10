@@ -30,10 +30,35 @@ namespace Reactor.Uwp.Internal;
 /// <c>TreeViewNode.Content</c> 收的是 <c>object</c>，塞 <c>UIElement</c> 也能显示，
 /// 但那些元素就住在协调器视野之外——没人替它们跑 cleanup。所以这条路不提供。
 /// </para>
+/// <para>
+/// 下面这行是给静态检查看的：<c>SelectionMode</c> 只在 <c>Mount</c> 里被读，
+/// <c>PropertyDriftTests</c> 认这个登记才会放过；让它合法的理由写在上面那段里——
+/// 改它会重摆整棵树（展开态归零），而这一族连一个可写的选中槽位都没有，
+/// 没有能把两份状态对齐到可判定的落点。
+/// </para>
 /// </remarks>
+// MOUNT-ONLY: SelectionMode
 internal sealed class TreeViewHandler : ElementHandler<TreeViewElement, MuxControls.TreeView>
 {
     private static readonly WeakTable<MuxControls.TreeView, TreeCallbacks> Callbacks = new();
+
+    /// <summary>
+    /// 挂在控件上的三个委托（ItemInvoked / Expanding / Collapsed），Unmount 要拿它们解绑。
+    /// 语义与 <c>RadioButtonsHandler.Handlers</c> 一致，详见那边的注释。
+    /// </summary>
+    /// <remarks>
+    /// <b>它同时是这个类的"订阅过没有"守卫。</b>以前这个角色由
+    /// <c>Callbacks.ContainsKey</c> 兼任，而 <see cref="Unmount"/> 会
+    /// <c>Callbacks.Remove</c>——于是同一个 <c>TreeView</c> 被<b>重新挂载</b>时
+    /// （复用控件、条件分支换 element 都走这条路）守卫判成"没挂过"，
+    /// 三个委托<b>再挂一遍</b>，此后每一发都是双份回调。现在守卫挪到这只表上：
+    /// 它的生命周期与事件订阅<b>同起同落</b>，重新挂载时只会摘差值、不会再叠加。
+    /// </remarks>
+    private static readonly WeakTable<
+        MuxControls.TreeView,
+        (Windows.Foundation.TypedEventHandler<MuxControls.TreeView, MuxControls.TreeViewItemInvokedEventArgs>? Invoked,
+         Windows.Foundation.TypedEventHandler<MuxControls.TreeView, MuxControls.TreeViewExpandingEventArgs>? Expanding,
+         Windows.Foundation.TypedEventHandler<MuxControls.TreeView, MuxControls.TreeViewCollapsedEventArgs>? Collapsed)> Handlers = new();
 
     protected override MuxControls.TreeView Mount(Reconciler reconciler, TreeViewElement element)
     {
@@ -61,6 +86,28 @@ internal sealed class TreeViewHandler : ElementHandler<TreeViewElement, MuxContr
 
     protected override void Unmount(Reconciler reconciler, MuxControls.TreeView control)
     {
+        // 先把订阅摘掉，再摘键：顺序反了，"键没了、订阅还在"就会回来
+        // （那时重新挂载会再挂一份，每发事件都是双份回调）。
+        if (Handlers.TryGetValue(control, out var tuple))
+        {
+            if (tuple.Invoked is { } onInvoked)
+            {
+                control.ItemInvoked -= onInvoked;
+            }
+
+            if (tuple.Expanding is { } onExpanding)
+            {
+                control.Expanding -= onExpanding;
+            }
+
+            if (tuple.Collapsed is { } onCollapsed)
+            {
+                control.Collapsed -= onCollapsed;
+            }
+
+            Handlers.Remove(control);
+        }
+
         Callbacks.Remove(control);
     }
 
@@ -83,34 +130,49 @@ internal sealed class TreeViewHandler : ElementHandler<TreeViewElement, MuxContr
 
     private static void Rebind(MuxControls.TreeView control, TreeViewElement element)
     {
-        if (!Callbacks.ContainsKey(control))
+        if (!Handlers.ContainsKey(control))
         {
-            Callbacks.Set(control, new TreeCallbacks());
-
-            control.ItemInvoked += (s, args) =>
-            {
-                if (s is MuxControls.TreeView tree && Callbacks.TryGetValue(tree, out var box))
+            // RCW 身份：委托里一律用订阅时捕获的 <c>control</c> 查表，
+            // <b>不碰回调给的 <c>sender</c></b>——WinRT 不保证它和订阅时是同一个
+            // 托管包装，而所有按控件建的表都是引用相等，拿它查表会查不到、
+            // 委托静默返回，表现为"点了没反应"。理由详见
+            // <c>RadioButtonsHandler.Handlers</c> 字段的注释。
+            var invoked = new Windows.Foundation.TypedEventHandler<
+                MuxControls.TreeView, MuxControls.TreeViewItemInvokedEventArgs>(
+                (s, args) =>
                 {
-                    // 节点的 Content 就是我们放进去的那个 Text，所以能直接对回来。
-                    box.ItemInvoked?.Invoke(args.InvokedItem as string);
-                }
-            };
+                    if (Callbacks.TryGetValue(control, out var box))
+                    {
+                        // 节点的 Content 就是我们放进去的那个 Text，所以能直接对回来。
+                        box.ItemInvoked?.Invoke(args.InvokedItem as string);
+                    }
+                });
 
-            control.Expanding += (s, args) =>
-            {
-                if (s is MuxControls.TreeView tree && Callbacks.TryGetValue(tree, out var box))
+            var expanding = new Windows.Foundation.TypedEventHandler<
+                MuxControls.TreeView, MuxControls.TreeViewExpandingEventArgs>(
+                (s, args) =>
                 {
-                    box.Expanding?.Invoke(args.Node?.Content as string);
-                }
-            };
+                    if (Callbacks.TryGetValue(control, out var box))
+                    {
+                        box.Expanding?.Invoke(args.Node?.Content as string);
+                    }
+                });
 
-            control.Collapsed += (s, args) =>
-            {
-                if (s is MuxControls.TreeView tree && Callbacks.TryGetValue(tree, out var box))
+            var collapsed = new Windows.Foundation.TypedEventHandler<
+                MuxControls.TreeView, MuxControls.TreeViewCollapsedEventArgs>(
+                (s, args) =>
                 {
-                    box.Collapsed?.Invoke(args.Node?.Content as string);
-                }
-            };
+                    if (Callbacks.TryGetValue(control, out var box))
+                    {
+                        box.Collapsed?.Invoke(args.Node?.Content as string);
+                    }
+                });
+
+            control.ItemInvoked += invoked;
+            control.Expanding += expanding;
+            control.Collapsed += collapsed;
+
+            Handlers.Set(control, (invoked, expanding, collapsed));
         }
 
         // 整只盒子换掉（理由同 <c>SelectorHandler</c>：取出来改字段，在源码扫描里

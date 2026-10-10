@@ -55,6 +55,7 @@ public sealed class PipsPagerBasic : Component
                     orientation: orientation,
                     selectedPageIndex: page,
                     onSelectedPageIndexChanged: setPage)
+                .Margin(0, 12, 0, 0)
                 .HAlign(HorizontalAlignment.Center),
 
             HStack(8,

@@ -34,8 +34,60 @@ public sealed partial class App : ReactorApplication<TestShellApp>
     protected override void OnLaunched(Windows.ApplicationModel.Activation.LaunchActivatedEventArgs args)
     {
         UwpApp.Services.ElementSound.Apply(UwpApp.Services.AppSettings.Current.Sound);
+        ApplyTraceSwitch();
 
         base.OnLaunched(args);
+    }
+
+    /// <summary>
+    /// 无人值守排查用的日志开关：<c>LocalState\trace-input.txt</c> 存在就把
+    /// <c>Input</c> 通道降到 <c>Trace</c> 并落盘。
+    /// </summary>
+    /// <remarks>
+    /// 为什么要它：闸门的"吞掉"是 <c>Trace</c> 级、不落盘，真机上只看得见放行、
+    /// 看不见被吞——而"点了没反应"恰恰在被吞那一侧。UIA 脚本靠这个文件取证，
+    /// 排完删掉文件就回到默认（<c>PersistTrace</c> 默认关）。
+    /// <para>
+    /// 只开 <c>Input</c> 一个通道：全局降到 Trace 会把每帧都打进文件，把要看的那几行淹掉。
+    /// </para>
+    /// </remarks>
+    private static void ApplyTraceSwitch()
+    {
+        try
+        {
+            // 同步判存在即可：LocalFolder.Path 是可直接 stat 的真实路径
+            // （ReactorLog 落盘用的就是它）。TryGetItemAsync 在这儿的同步上下文里
+            // 拿不到结果，别用。
+            // 文件<b>内容</b>是通道名列表（逗号/空格分隔，如 <c>Input,Patch</c>）。
+            // 空文件 = 全通道降到 Trace（会很吵，只在小窗口里这么开）。
+            var path = System.IO.Path.Combine(
+                Windows.Storage.ApplicationData.Current.LocalFolder.Path, "trace-input.txt");
+            if (!System.IO.File.Exists(path))
+            {
+                return;
+            }
+
+            var spec = System.IO.File.ReadAllText(path).Trim();
+            var names = spec.Length == 0
+                ? null
+                : spec.Split(new[] { ',', ' ', ';' }, System.StringSplitOptions.RemoveEmptyEntries);
+
+            foreach (var channel in System.Enum.GetValues<ReactorLogChannel>())
+            {
+                if (names is null || names.Contains(channel.ToString(),
+                                                   System.StringComparer.OrdinalIgnoreCase))
+                {
+                    ReactorLog.SetChannel(channel, ReactorLogLevel.Trace);
+                }
+            }
+
+            ReactorLog.PersistTrace = true;
+            ReactorLog.Info(ReactorLogChannel.Host, $"[trace-switch] Trace 落盘已开：{spec}");
+        }
+        catch
+        {
+            // 诊断开关读不到就按默认走，不影响启动。
+        }
     }
 }
 // 第一个验收组件：纯 C# 描述 UI，含一个 WinUI 2 控件（InfoBar）

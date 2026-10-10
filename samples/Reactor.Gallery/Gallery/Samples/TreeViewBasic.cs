@@ -1,5 +1,6 @@
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
+using Windows.UI.Xaml;
 using static Microsoft.UI.Reactor.Factories;
 
 namespace Reactor.Gallery.Samples;
@@ -67,7 +68,11 @@ public sealed class TreeViewBasic : Component
                 node => setTrace($"展开：{node}"),
                 node => setTrace($"折叠：{node}"),
                 Files)
-                .Height(220),
+                .MinWidth(345)
+                .MaxHeight(400)
+                .Margin(0, 12, 0, 0)
+                .HAlign(HorizontalAlignment.Center)
+                .VAlign(VerticalAlignment.Top),
 
             TextBlock($"点到的节点：{picked}").Body(),
             TextBlock($"最近一次展开 / 折叠：{trace}").Caption().Subtle(),

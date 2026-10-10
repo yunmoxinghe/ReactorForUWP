@@ -1,5 +1,6 @@
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
+using Windows.UI.Xaml;
 using static Microsoft.UI.Reactor.Factories;
 
 namespace Reactor.Gallery.Samples;
@@ -18,13 +19,23 @@ namespace Reactor.Gallery.Samples;
 public sealed class ButtonVariants : Component
 {
     public override Element Render() =>
-        HStack(8,
+        // 官方那一排两颗样式按钮之间是 Spacing 16（本地原先用的 8 是自定值）。
+        HStack(16,
             Button("标准按钮", () => { }),
             Button("强调按钮", () => { }).Accent(),
+            // 官方第二颗用的是 SubtleButtonStyle：同样在 NamedStyles 里有现成的 .Subtle()。
+            Button("弱化按钮", () => { }).Subtle(),
             Button("禁用", () => { }).Disabled(),
             Button(
                 HStack(6,
                     FontIcon("\uE896"),
                     TextBlock("带图标的内容")),
-                () => { }).AutomationName("带图标的按钮"));
+                () => { }).AutomationName("带图标的按钮"),
+
+            // 官方还有一档"会自动折行的按钮"：宽度由 MaxWidth 限住，换行发生在
+            // 内容那个 TextBlock 上——按钮自己没有 TextWrapping 这个属性。
+            Button(
+                    TextBlock("按钮文字长到一行放不下时会自己折行，上限由外层决定。")
+                        .TextWrapping(TextWrapping.WrapWholeWords))
+                .MaxWidth(240));
 }

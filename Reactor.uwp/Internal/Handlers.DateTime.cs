@@ -432,8 +432,14 @@ internal sealed class CalendarDatePickerHandler
 /// <c>key</c> 让控件重建（重建时配置在 <c>Mount</c> 里自然生效，代价是选中态归零，
 /// 而选中态本来就是非受控的）。
 /// </para>
+/// <para>
+/// 下面这行是给静态检查看的：<c>Mount</c> 里写了、<c>Update</c> 却不认的那些属性
+/// 必须逐个登记，否则 <c>PropertyDriftTests</c> 会报警。让它合法的理由写在上面
+/// 那一段里——改动这些配置会牵动选中集合，而这里没有受控值可落。
+/// </para>
 /// </remarks>
-internal sealed class CalendarViewHandler : ElementHandler<CalendarViewElement, CalendarView>
+// MOUNT-ONLY: CalendarIdentifier MaxDate MinDate DisplayMode SelectionMode IsTodayHighlighted
+    internal sealed class CalendarViewHandler : ElementHandler<CalendarViewElement, CalendarView>
 {
     private static readonly WeakTable<CalendarView,
         Windows.Foundation.TypedEventHandler<CalendarView,

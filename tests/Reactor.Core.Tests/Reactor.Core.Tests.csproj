@@ -33,6 +33,11 @@
     <Compile Include="RenderBatcherTests.cs" />
     <Compile Include="ReorderTests.cs" />
     <Compile Include="SelectionGateTests.cs" />
+    <!-- 一次手势不得回调两次：真机日志里 RadioButtons#5 落过两条同值回调。
+         终态不变量抓不到它（重复不改变终态），所以单独一组、只查过程。 -->
+    <Compile Include="DoubleCallbackTests.cs" />
+    <!-- 订阅与弱表必须同生共死：源码级哨兵（仿真里没有"订阅"这个概念，抓不到）。 -->
+    <Compile Include="DetachedContractTests.cs" />
     <Compile Include="ListViewSelectionSim.cs" />
     <Compile Include="ListViewSelectionTests.cs" />
     <Compile Include="ControlledSelectionSim.cs" />
@@ -51,6 +56,12 @@
     <Compile Include="RebuildEchoSim.cs" />
     <Compile Include="RebuildEchoTests.cs" />
     <Compile Include="EchoContractTests.cs" />
+    <!-- 单槽容器的「patch 路径 vs 卸载路径」：这套判据过去在两条路上各写一份，
+         卸载那份少了一级登记表，代价是五个容器的子树不回收。模型 + 源码级 invariant。 -->
+    <Compile Include="SingleSlotSim.cs" />
+    <Compile Include="SingleSlotTests.cs" />
+    <!-- Mount 与 Update 是同一件事的两个时刻，早晚跑偏；这组扫的是两者的属性差。 -->
+    <Compile Include="PropertyDriftTests.cs" />
     <!-- 示例画廊的索引契约：展示的源码必须真实存在且与组件对得上（纯文件扫描） -->
     <Compile Include="GalleryIndexTests.cs" />
   </ItemGroup>

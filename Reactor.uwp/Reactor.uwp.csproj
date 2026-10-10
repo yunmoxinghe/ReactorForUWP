@@ -51,7 +51,18 @@
            还挂着的时候 → 被当成用户输入回调出去（Slider / NumberBox 共有）。
          另给受控值越界加了纠正守卫，防止越界时自激。
          以上都是测试自行发现并复现的，含"不修就坏"的反向对照。 -->
-    <PackageVersion>0.1.0-alpha.8</PackageVersion>
+    <!-- alpha.9：修掉"事件委托里拿 sender 查表"与"Unmount 不解绑"这两个形状，
+         共 6 处（TreeView 的 ItemInvoked/Expanding/Collapsed、HyperlinkButton 与
+         SettingsCard 的 Click、ToggleSwitch 的 Toggled、RadioButton 的
+         Checked/Unchecked）。统一形状：委托里用订阅时捕获的 control 查表；
+         订阅守卫从"回调表键在不在"换成专用委托弱表（它与订阅同起同落）；
+         Unmount 必须 -= 真解绑。顺带把 ToggleSwitch / RadioButton 的 Mount 从挂
+         裸回调改成挂 Guard(...)，受控首发因此既有日志也有回声抑制。
+         判别力说明：真机（tools/uia/winapp_sender.py 的裸 sender 对照）实测
+         这两条路径上 WinRT 交回的是同一个 RCW —— 修复是按构造正确的防御性
+         改动，真机验不出来；守它的是 DetachedContractTests 的源码级契约
+         （全目录扫描 + 三形态识别 + 变异验证）。详见 release-notes/alpha.9.md。 -->
+    <PackageVersion>0.1.0-alpha.9</PackageVersion>
     <Authors>云漠星</Authors>
     <Copyright>Copyright © 2026 云漠星</Copyright>
     <Description>UWP + WinUI 2 的声明式 UI 框架：用 C# 描述界面，不写 XAML。映射 WinUI 2 控件（不是内置控件树），带自实现的虚拟列表与 ItemsRepeater 原生工厂桥。</Description>

@@ -17,6 +17,7 @@ public sealed class TextBlockStyles : Component
 {
     public override Element Render() =>
         VStack(8,
+            TextBlock("I am a TextBlock."),
             TextBlock("标题 Title").Title(),
             TextBlock("大标题 TitleLarge").TitleLarge(),
             TextBlock("副标题 Subtitle").Subtitle(),
@@ -27,5 +28,11 @@ public sealed class TextBlockStyles : Component
             TextBlock("换行演示：这一段刻意写得很长，用来看打开折行之后一行放不下时是怎么排到下一行的，超过两行则截断。")
                 .Wrap()
                 .MaxLines(2)
-                .Caption());
+                .Caption(),
+
+            TextBlock("I am super excited to be here!")
+                .FontSize(24)
+                .CharacterSpacing(200)
+                .Foreground(Windows.UI.Colors.CornflowerBlue)
+                .Wrap());
 }

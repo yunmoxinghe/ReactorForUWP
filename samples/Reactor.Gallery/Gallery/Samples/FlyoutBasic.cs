@@ -38,8 +38,8 @@ public sealed class FlyoutBasic : Component
             HStack(12,
                 DropDownButton("填写备注…",
                     Flyout(
-                        VStack(10,
-                            TextBlock("这里是一棵子树：可以排版、可以放输入框。").Caption().Subtle().Wrap(),
+                        VStack(12,
+                            TextBlock("这里是一棵子树：可以排版、可以放输入框。").BaseText().Subtle().Wrap(),
                             TextBox(draft, setDraft, placeholderText: "写点什么…")
                                 .Width(220),
                             Button("记下来", () => setKept(draft)))

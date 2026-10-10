@@ -49,7 +49,8 @@ public sealed class RefreshContainerBasic : Component
                                 .Select(i => TextBlock($"第 {i} 行：把这块内容拉到顶再继续往下拽。"))
                                 .ToArray()),
                             verticalScrollBar: ScrollBarVisibility.Auto)
-                        .Height(220),
+                        .Height(220)
+                        .MinWidth(200),
                     pullDirection: direction,
                     onRefreshRequested: ticket =>
                     {
@@ -60,6 +61,8 @@ public sealed class RefreshContainerBasic : Component
                         ticket.Complete();
                     })
                 .Height(220)
+                .HAlign(HorizontalAlignment.Center)
+                .VAlign(VerticalAlignment.Center)
                 .WithBorder(ThemeResource.Brush("CardStrokeColorDefaultBrush")),
 
             TextBlock("换成 LeftToRight / RightToLeft 之后，在这块纵向内容上是拉不出刷新的——"

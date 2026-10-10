@@ -434,7 +434,12 @@ internal sealed class SplitButtonHandler : ElementHandler<SplitButtonElement, Mu
     // "这张表在哪儿摘"，而不是顺着回调再跳一层。
     protected override void Unmount(Reconciler reconciler, MuxControls.SplitButton control)
     {
-        control.Click -= OnSplitClick;
+        if (ClickHandlers.TryGetValue(control, out var bound) && bound is { } attached)
+        {
+            control.Click -= attached;
+            ClickHandlers.Remove(control);
+        }
+
         Clicks.Remove(control);
 
         // 浮出层里的子树不在可视树里，UnmountTree 递归不到（见 ContentFlyouts）。
@@ -468,7 +473,12 @@ internal sealed class SplitButtonHandler : ElementHandler<SplitButtonElement, Mu
     /// </remarks>
     private static void RebindClick(MuxControls.SplitButton control, Action? onClick)
     {
-        control.Click -= OnSplitClick;
+        // 先摘旧的：委托是闭包，只能靠存下来的那一份解绑。
+        if (ClickHandlers.TryGetValue(control, out var bound) && bound is { } attached)
+        {
+            control.Click -= attached;
+            ClickHandlers.Remove(control);
+        }
 
         if (onClick is null)
         {
@@ -477,13 +487,22 @@ internal sealed class SplitButtonHandler : ElementHandler<SplitButtonElement, Mu
         }
 
         Clicks.Set(control, onClick);
-        control.Click += OnSplitClick;
+
+        // 用订阅时那个引用（<c>control</c>）查表，不用回调给的 <c>sender</c>。
+        // 理由见 RadioButtonsHandler.Handlers 字段的注释。
+        Windows.Foundation.TypedEventHandler<MuxControls.SplitButton, MuxControls.SplitButtonClickEventArgs> handler =
+            (s, args) => Clicks[control]?.Invoke();
+
+        control.Click += handler;
+        ClickHandlers.Set(control, handler);
     }
 
     private static readonly WeakTable<MuxControls.SplitButton, Action> Clicks = new();
 
-    private static void OnSplitClick(MuxControls.SplitButton sender, object args) =>
-        Clicks[sender]?.Invoke();
+    /// <summary>每个按钮上当前挂着的点击委托（闭包，必须存下来才能 <c>-=</c>）。</summary>
+    private static readonly WeakTable<
+        MuxControls.SplitButton,
+        Windows.Foundation.TypedEventHandler<MuxControls.SplitButton, MuxControls.SplitButtonClickEventArgs>?> ClickHandlers = new();
 }
 
 /// <summary>

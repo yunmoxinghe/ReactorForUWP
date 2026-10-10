@@ -41,14 +41,16 @@ public sealed class SliderTicks : Component
             Slider(Optional<double>.Of(plain), 0, 100, setPlain,
                 header: "只画刻度",
                 tickFrequency: 10,
-                tickPlacement: TickPlacement.Outside),
+                tickPlacement: TickPlacement.Outside)
+                .Width(290),
             TextBlock($"当前 {plain:F0}（可以是 37 这种非整十的数）").Caption().Subtle(),
 
             Slider(Optional<double>.Of(snapped), 0, 100, setSnapped,
                 header: "吸附到刻度",
                 tickFrequency: 10,
                 tickPlacement: TickPlacement.Outside,
-                snapsTo: SliderSnapsTo.Ticks),
+                snapsTo: SliderSnapsTo.Ticks)
+                .Width(290),
             TextBlock($"当前 {snapped:F0}（只会是 0 / 10 / 20 …）").Caption().Subtle(),
 
             TextBlock("竖向与拇指气泡").Caption().Subtle(),

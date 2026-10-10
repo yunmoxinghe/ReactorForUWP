@@ -1,5 +1,6 @@
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
+using Windows.UI.Xaml;
 using static Microsoft.UI.Reactor.Factories;
 
 namespace Reactor.Gallery.Samples;
@@ -27,12 +28,19 @@ public sealed class RepeatButtonBasic : Component
 
         return VStack(14,
             TextBlock("按住不放").Body(),
-            RepeatButton(
-                "按住我",
-                onClick: () => setCount(count + 1),
-                delay: 400,
-                interval: 80),
-            TextBlock($"点了 {count} 次").Caption().Subtle(),
+            // 官方那一例是「按钮 + 右边一行读数」横排（读数 Margin 8、垂直居中），
+            // 读数跟着按下的次数实时变，不是按完再看。
+            HStack(8,
+                RepeatButton(
+                    "按住我",
+                    onClick: () => setCount(count + 1),
+                    delay: 400,
+                    interval: 80),
+                TextBlock($"点了 {count} 次")
+                    .Caption()
+                    .Subtle()
+                    .Margin(8, 0, 0, 0)
+                    .VAlign(VerticalAlignment.Center)),
 
             TextBlock("调步长用").Body(),
             HStack(8,

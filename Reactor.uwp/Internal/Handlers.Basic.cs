@@ -404,6 +404,13 @@ internal sealed class SliderHandler : ElementHandler<SliderElement, Slider>
 }
 
 /// <summary>WinUI 2 的 InfoBar：验证 XamlControlsResources 纯代码加载链路。</summary>
+/// <remarks>
+/// <c>IsOpen</c> 是<b>种子值</b>，只在 <c>Mount</c> 写一次、<c>Update</c> 里故意不认：
+/// 用户点了 × 把它关掉之后，下一轮重渲染<b>不该</b>再把它打开——那不是状态同步，
+/// 那是把用户的操作撤回。下面那行登记是<b>有意如此</b>，不是"忘记下发"；
+/// 不登记的话 <c>PropertyDriftTests</c> 会当成属性漂移报警。
+/// </remarks>
+// MOUNT-ONLY: IsOpen
 internal sealed class InfoBarHandler : ElementHandler<InfoBarElement, MuxControls.InfoBar>
 {
     protected override MuxControls.InfoBar Mount(Reconciler reconciler, InfoBarElement element) =>
@@ -412,7 +419,11 @@ internal sealed class InfoBarHandler : ElementHandler<InfoBarElement, MuxControl
             Message = element.Message,
             Severity = element.Severity,
             IsIconVisible = element.IsIconVisible,
-            IsOpen = true,
+            // Title 在官方是 hstring，不给就写空串（与"不显示标题"等价），
+            // 别把 null 递给 WinRT 属性。
+            Title = element.Title ?? string.Empty,
+            IsClosable = element.IsClosable,
+            IsOpen = element.IsOpen,
         };
 
     protected override void Update(
@@ -427,9 +438,18 @@ internal sealed class InfoBarHandler : ElementHandler<InfoBarElement, MuxControl
             oldElement.IsIconVisible,
             newElement.IsIconVisible,
             value => control.IsIconVisible = value);
+        PropWriter.Set(
+            oldElement.Title,
+            newElement.Title,
+            value => control.Title = value ?? string.Empty);
+        PropWriter.Set(
+            oldElement.IsClosable,
+            newElement.IsClosable,
+            value => control.IsClosable = value);
 
         // IsOpen 是「种子值」属性（官方 Initial / InitialOnly 语义）：只在 mount 写一次，
         // 之后归控件自己——用户按了关闭按钮就不该被下一轮重渲染重新打开。
+        // 同理它不在这里下发：动态改 IsOpen 不会生效，想重新打开得换一个元素实例。
     }
 }
 

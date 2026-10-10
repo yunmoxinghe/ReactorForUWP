@@ -11,6 +11,44 @@ public static partial class Factories
     // ── 浮层与双窗格 ─────────────────────────────────────────────
 
     /// <summary>
+    /// 浮层容器：一块盖在最上层的任意内容（自带这套皮的是 <c>Flyout</c> /
+    /// <c>ContentDialog</c>，它不是）。
+    /// </summary>
+    /// <param name="child">里面的内容（任意元素树）。</param>
+    /// <param name="isOpen">是否展开（<b>受控</b>：给了值才受控，null = 不管它）。</param>
+    /// <param name="isLightDismissEnabled">点外面 / Esc 是否关掉它（官方默认<b>关</b>）。</param>
+    /// <param name="shouldConstrainToRootBounds">
+    /// 是否约束在窗口内（<c>false</c> 才允许浮出窗口之外；null = 用官方默认）。
+    /// </param>
+    /// <param name="horizontalOffset">相对目标（或窗口左上角）的水平偏移。</param>
+    /// <param name="verticalOffset">相对目标（或窗口左上角）的垂直偏移。</param>
+    /// <param name="targetIndex">指向<b>同层第几个</b>子元素（见 <see cref="PopupElement"/>）。</param>
+    /// <param name="desiredPlacement">想挂在目标的哪一侧（是"期望"，不是"结果"）。</param>
+    /// <param name="onIsOpenChanged">展开状态变了（参数就是新的 <c>IsOpen</c>）。</param>
+    public static PopupElement Popup(
+        Element? child = null,
+        bool? isOpen = null,
+        bool isLightDismissEnabled = false,
+        bool? shouldConstrainToRootBounds = null,
+        double? horizontalOffset = null,
+        double? verticalOffset = null,
+        int? targetIndex = null,
+        PopupPlacementMode? desiredPlacement = null,
+        Action<bool>? onIsOpenChanged = null) =>
+        new()
+        {
+            Child = child,
+            IsOpen = isOpen,
+            IsLightDismissEnabled = isLightDismissEnabled,
+            ShouldConstrainToRootBounds = shouldConstrainToRootBounds,
+            HorizontalOffset = horizontalOffset,
+            VerticalOffset = verticalOffset,
+            TargetIndex = targetIndex,
+            DesiredPlacement = desiredPlacement,
+            OnIsOpenChanged = onIsOpenChanged,
+        };
+
+    /// <summary>
     /// 教学提示：挂在某个控件旁边的一段说明。
     /// </summary>
     /// <param name="title">标题。</param>

@@ -34,9 +34,13 @@ public sealed class AppBarToggleButtonBasic : Component
     {
         var (bold, setBold) = UseState(false);
         var (italic, setItalic) = UseState(false);
+        var (sigma, setSigma) = UseState(false);
         var (picks, setPicks) = UseState(0);
 
-        var preview = TextBlock($"加粗：{(bold ? "开" : "关")}　　斜体：{(italic ? "开" : "关")}").Body();
+        var preview = TextBlock(
+                $"加粗：{(bold ? "开" : "关")}　　斜体：{(italic ? "开" : "关")}　　"
+                + $"求和：{(sigma ? "开" : "关")}")
+            .Body();
 
         if (bold)
         {
@@ -65,6 +69,13 @@ public sealed class AppBarToggleButtonBasic : Component
                             setItalic(value);
                             setPicks(picks + 1);
                         }),
+                        // 图标也可以指定字体：官方那一档是 Candara 的 Σ。
+                        AppBarToggleButton("求和", FontIcon("Σ", fontFamily: "Candara"), sigma,
+                            value =>
+                            {
+                                setSigma(value);
+                                setPicks(picks + 1);
+                            }),
                         AppBarSeparator(),
                         AppBarButton("右对齐", SymbolIcon(Symbol.AlignRight),
                             () => setPicks(picks + 1)),
@@ -78,7 +89,8 @@ public sealed class AppBarToggleButtonBasic : Component
 
             TextBlock("「只读模式」在次命令区里，且没有给回调 —— 它仍然按得下去，"
                       + "但 state 不知道，下一次重渲染就会把它按回元素上写死的那个值。"
-                      + "「右对齐」演示的是 SymbolIcon 也能进图标槽。")
+                      + "「右对齐」演示的是 SymbolIcon 也能进图标槽，"
+                      + "「求和」演示的是 FontIcon 连字体一起指定（官方那一档的 Candara Σ）。")
                 .Caption()
                 .Wrap());
     }

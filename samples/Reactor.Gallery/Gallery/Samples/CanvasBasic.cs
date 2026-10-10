@@ -31,23 +31,24 @@ public sealed class CanvasBasic : Component
 
         return VStack(12,
             HStack(8,
-                Button(moved ? "挪回去" : "挪到右下", () => setMoved(!moved)),
+                Button(moved ? "挪回去" : "挪到绿上面", () => setMoved(!moved)),
                 TextBlock(moved
-                        ? "蓝块在 (130, 70)，压过红块——两者重叠区域由 ZIndex 决定谁在上面"
-                        : "蓝块在 (40, 24)，与红块不重叠")
+                        ? "蓝块挪到 (40,40) 与绿完全重合、ZIndex 降到 0 —— 被绿盖住，看不见了"
+                        : "三块各在 (20,20) / (40,40) / (60,60)，ZIndex 1 / 2 / 3")
                     .Caption().Subtle().VAlign(VerticalAlignment.Center)),
 
-            // Canvas 不会自动撑开：不写死高度它就是 0 高，什么都看不见。
+            // Canvas 不会自动撑开：不写死尺寸它就是 0 高，什么都看不见。
             Canvas(
                     Block("红", Colors.Tomato).Canvas(left: 20, top: 20, zIndex: 1),
-                    Block("绿", Colors.MediumSeaGreen).Canvas(left: 190, top: 40, zIndex: 1),
+                    Block("绿", Colors.MediumSeaGreen).Canvas(left: 40, top: 40, zIndex: 2),
                     Block("蓝", Colors.SteelBlue)
-                        .Canvas(left: moved ? 130 : 40, top: moved ? 70 : 24, zIndex: moved ? 9 : 0))
-                .Height(150)
+                        .Canvas(left: moved ? 40 : 60, top: moved ? 40 : 60, zIndex: moved ? 0 : 3))
+                .Size(140, 140)
                 .WithBorder(ThemeResource.Brush("CardStrokeColorDefaultBrush")),
 
-            TextBlock("三块都是 80×80。红与蓝在 moved 状态下重叠：蓝的 ZIndex 被提到 9，"
-                      + "于是压在红上面；挪回去时蓝的 ZIndex 落回 0，压的就成了红。")
+            TextBlock("三块都是 40×40，画布 140×140 —— 官方那一档的尺寸。"
+                      + "相邻两块各错开 20px，所以看得出是「一层压一层」：ZIndex 大的在上面。"
+                      + "把蓝挪到与绿完全重合、ZIndex 落到 0，它就整个被绿盖住。")
                 .Caption()
                 .Subtle()
                 .Wrap());
@@ -59,6 +60,5 @@ public sealed class CanvasBasic : Component
                 .HAlign(HorizontalAlignment.Center)
                 .VAlign(VerticalAlignment.Center))
             .Background(color)
-            .Width(80)
-            .Height(80);
+            .Size(40, 40);
 }

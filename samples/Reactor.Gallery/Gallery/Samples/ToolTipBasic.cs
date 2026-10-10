@@ -35,7 +35,8 @@ namespace Reactor.Gallery.Samples;
 /// </remarks>
 public sealed class ToolTipBasic : Component
 {
-    private const string Source = "ms-appx:///Assets/Square150x150Logo.scale-100.png";
+    // 官方引用 SampleMedia 照片；本地用生成的横向替代图（见 tools/parity/make_sample_media.py）。
+    private const string Source = "ms-appx:///Assets/SampleMedia/treetops.png";
 
     /// <summary>
     /// <c>PlacementMode</c> 有五档；<c>Mouse</c> 是官方默认值（跟着指针、在指针上方居中），
@@ -86,6 +87,8 @@ public sealed class ToolTipBasic : Component
                 .ToolTip(Tip($"这个气泡被钉在「{ModeNames[mode]}」", placement: Modes[mode])),
 
             TextBlock("偏移与快捷键").Caption().Subtle(),
+            TextBlock("TextBlock with an offset ToolTip.")
+                .ToolTip(Tip("Offset information.", verticalOffset: -80)),
             HStack(12,
                 Button("离远一点")
                     .ToolTip(Tip("往下挪 28px", placement: PlacementMode.Bottom, verticalOffset: 28)),

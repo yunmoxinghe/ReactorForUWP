@@ -18,13 +18,17 @@ namespace Reactor.Gallery.Samples;
 public sealed class RichTextBasic : Component
 {
     public override Element Render() =>
-        RichTextBlock(
-            Paragraph(
-                Run("这一段由三段拼在一起：", bold: true),
-                Run("第一段是强调色。")
-                    .Foreground(ThemeResource.Brush("AccentFillColorDefaultBrush")),
-                Run("第二段回到默认前景色，"),
-                Run("第三段是斜体。", italic: true)),
-            Paragraph(24.0,
-                Run("带缩进的第二段——靠 Paragraph 的左边距，而不是在一串 Run 前面塞空格。")));
+        VStack(12,
+            RichTextBlock(
+                Paragraph(Run("I am a RichTextBlock."))),
+
+            RichTextBlock(
+                Paragraph(
+                    Run("这一段由三段拼在一起：", bold: true),
+                    Run("第一段是强调色。")
+                        .Foreground(ThemeResource.Brush("AccentFillColorDefaultBrush")),
+                    Run("第二段回到默认前景色，"),
+                    Run("第三段是斜体。", italic: true)),
+                Paragraph(24.0,
+                    Run("带缩进的第二段——靠 Paragraph 的左边距，而不是在一串 Run 前面塞空格。"))));
 }

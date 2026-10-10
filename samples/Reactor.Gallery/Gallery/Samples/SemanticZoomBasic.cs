@@ -47,7 +47,7 @@ public sealed class SemanticZoomBasic : Component
                     isZoomedInViewActive: zoomedIn,
                     canChangeViews: canChange,
                     onIsZoomedInViewActiveChanged: setZoomedIn)
-                .Height(240)
+                .Height(500)
                 .WithBorder(ThemeResource.Brush("CardStrokeColorDefaultBrush")),
 
             HStack(8,

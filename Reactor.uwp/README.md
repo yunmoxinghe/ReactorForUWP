@@ -62,7 +62,7 @@ UWP + WinUI 2 的声明式 UI 框架：用 C# 描述界面，不写 XAML。
 `Reactor.uwp/Internal/Handlers.*.cs` 得出，README 里的这个数由同一条测试守着——
 新增一个受控站点而忘了改这里，测试会红。
 
-<!-- CONTROLLED-SITES: 27 -->
+<!-- CONTROLLED-SITES: 28 -->
 （上面这个数是"写了受控属性、且有回执通道"的类；涉及的属性 12 个，
 另有 `IsPaneOpen` 等属性被显式登记为非受控 —— 元素上没有对应回调，拿不到回执。
 `RichEditBox` 的文本连"受控"都没装：官方把文本放在 `Document` 里、没有 `Text`
@@ -75,7 +75,7 @@ IME / selection replacement 会连发多个 `TextChanged`，无条件删除登�
 ## 安装
 
 ```xml
-<PackageReference Include="Reactor.Uwp" Version="0.1.0-alpha.7" />
+<PackageReference Include="Reactor.Uwp" Version="0.1.0-alpha.9" />
 ```
 
 消费方项目要求（与本机工程一致）：
@@ -226,7 +226,7 @@ manifest 里把入口指向这个类：
 
 ## 状态
 
-`0.1.0-alpha.7`。已验证的核心链路：纯 C# 启动与 WinUI 2 资源加载、元素 diff/patch、
+`0.1.0-alpha.9`。已验证的核心链路：纯 C# 启动与 WinUI 2 资源加载、元素 diff/patch、
 Frame 导航与过渡、设置页（SettingsCard / SettingsExpander）、
 ItemsRepeater 虚拟化（含回收不变量校验）、
 受控属性闭环（回声抑制 / 吞后纠正 / 越界守卫 / 就绪闸，逐条有仿真与反向对照）。

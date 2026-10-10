@@ -21,6 +21,18 @@ internal sealed class HyperlinkButtonHandler : ElementHandler<HyperlinkButtonEle
 {
     private static readonly WeakTable<HyperlinkButton, Action?> Callbacks = new();
 
+    /// <summary>
+    /// 挂在控件上的 <c>Click</c> 委托（Unmount 要拿它解绑）。语义与
+    /// <c>RadioButtonsHandler.Handlers</c> 一致，详见那边的注释。
+    /// </summary>
+    /// <remarks>
+    /// 顺便把"订阅过没有"的守卫从 <c>Callbacks.ContainsKey</c> 挪到这里：
+    /// <c>Unmount</c> 会 <c>Callbacks.Remove</c>，拿它当守卫的话，同一个
+    /// <c>HyperlinkButton</c> 被<b>重新挂载</b>时会被判成"没挂过"，<c>Click</c>
+    /// 再挂一份——此后每一次点击都是双份回调。
+    /// </remarks>
+    private static readonly WeakTable<HyperlinkButton, RoutedEventHandler?> ClickHandlers = new();
+
     protected override HyperlinkButton Mount(Reconciler reconciler, HyperlinkButtonElement element)
     {
         var button = new HyperlinkButton();
@@ -39,7 +51,18 @@ internal sealed class HyperlinkButtonHandler : ElementHandler<HyperlinkButtonEle
         Rebind(control, newElement.OnClick);
     }
 
-    protected override void Unmount(Reconciler reconciler, HyperlinkButton control) => Callbacks.Remove(control);
+    protected override void Unmount(Reconciler reconciler, HyperlinkButton control)
+    {
+        // 先解绑再摘键：顺序反了就是"键没了、订阅还在"的形状，
+        // 重新挂载时会再挂一份。
+        if (ClickHandlers.TryGetValue(control, out var attached) && attached is { } handler)
+        {
+            control.Click -= handler;
+            ClickHandlers.Remove(control);
+        }
+
+        Callbacks.Remove(control);
+    }
 
     private static void ApplyContent(
         Reconciler reconciler,
@@ -70,17 +93,20 @@ internal sealed class HyperlinkButtonHandler : ElementHandler<HyperlinkButtonEle
 
     private static void Rebind(HyperlinkButton control, Action? callback)
     {
-        if (!Callbacks.ContainsKey(control))
+        if (!ClickHandlers.ContainsKey(control))
         {
-            Callbacks[control] = null;
-            control.Click += (s, _) =>
+            RoutedEventHandler handler = (s, _) =>
             {
-                var link = (HyperlinkButton)s;
-                if (Callbacks.TryGetValue(link, out var current))
+                // 用订阅时那个引用（<c>control</c>）查表，不用回调给的 <c>sender</c>。
+                // 理由见 RadioButtonsHandler.Handlers 字段的注释。
+                if (Callbacks.TryGetValue(control, out var current))
                 {
                     current?.Invoke();
                 }
             };
+
+            control.Click += handler;
+            ClickHandlers.Set(control, handler);
         }
 
         Callbacks[control] = callback;
@@ -318,7 +344,23 @@ internal sealed class BreadcrumbBarHandler
         }
 
         Callbacks[bar] = element.OnItemClicked;
-        bar.ItemClicked += OnItemClicked;
+
+        // 用<b>订阅时那个引用</b>（<c>bar</c>）查表，不用回调给的 <c>sender</c>：
+        // WinRT 不保证同一原生对象每次都给同一个托管包装，拿 sender 查表会查不到，
+        // 表现就是"点了没反应"。依据见 RadioButtonsHandler.Handlers 字段的注释。
+        Windows.Foundation.TypedEventHandler<
+            MuxControls.BreadcrumbBar,
+            MuxControls.BreadcrumbBarItemClickedEventArgs> handler =
+            (s, args) =>
+            {
+                if (Callbacks.TryGetValue(bar, out var callback))
+                {
+                    callback?.Invoke(args.Index);
+                }
+            };
+
+        bar.ItemClicked += handler;
+        ClickHandlers.Set(bar, handler);
 
         return bar;
     }
@@ -350,22 +392,24 @@ internal sealed class BreadcrumbBarHandler
 
     protected override void Unmount(Reconciler reconciler, MuxControls.BreadcrumbBar control)
     {
-        control.ItemClicked -= OnItemClicked;
+        if (ClickHandlers.TryGetValue(control, out var bound) && bound is { } attached)
+        {
+            control.ItemClicked -= attached;
+            ClickHandlers.Remove(control);
+        }
+
         Callbacks.Remove(control);
 
         // 只是提前释放：表本身是弱键的，控件不可达时条目也会自己消失。
         Carriers.Remove(control);
     }
 
-    private static void OnItemClicked(
-        MuxControls.BreadcrumbBar sender,
-        MuxControls.BreadcrumbBarItemClickedEventArgs args)
-    {
-        if (Callbacks.TryGetValue(sender, out var callback))
-        {
-            callback?.Invoke(args.Index);
-        }
-    }
+    /// <summary>每条面包屑上当前挂着的点击委托（闭包，必须存下来才能 <c>-=</c>）。</summary>
+    private static readonly WeakTable<
+        MuxControls.BreadcrumbBar,
+        Windows.Foundation.TypedEventHandler<
+            MuxControls.BreadcrumbBar,
+            MuxControls.BreadcrumbBarItemClickedEventArgs>?> ClickHandlers = new();
 
     /// <summary>
     /// 把条目下发给控件。<b>每次都换一个新的数据源引用</b>——这是 WinUI 源码硬要求的，
@@ -782,6 +826,17 @@ internal sealed class SettingsCardHandler : SettingsCardHandlerBase<SettingsCard
 {
     private static readonly WeakTable<ToolkitControls.SettingsCard, Action?> Callbacks = new();
 
+    /// <summary>
+    /// 挂在卡片上的 <c>Click</c> 委托（Unmount 要拿它解绑）。语义与
+    /// <c>RadioButtonsHandler.Handlers</c> 一致，详见那边的注释。
+    /// </summary>
+    /// <remarks>
+    /// "订阅过没有"的守卫也在这里：<c>Unmount</c> 会 <c>Callbacks.Remove</c>，
+    /// 拿那张表当守卫的话，同一个卡片被<b>重新挂载</b>时会被判成"没挂过"，
+    /// <c>Click</c> 再挂一份——此后每一次点击都是双份回调。
+    /// </remarks>
+    private static readonly WeakTable<ToolkitControls.SettingsCard, RoutedEventHandler?> ClickHandlers = new();
+
     protected override ToolkitControls.SettingsCard Mount(Reconciler reconciler, SettingsCardElement element)
     {
         var card = new ToolkitControls.SettingsCard { IsEnabled = element.IsEnabled };
@@ -844,22 +899,34 @@ internal sealed class SettingsCardHandler : SettingsCardHandlerBase<SettingsCard
     protected override void Unmount(Reconciler reconciler, ToolkitControls.SettingsCard control)
     {
         base.Unmount(reconciler, control);
+
+        // 先解绑再摘键：顺序反了就是"键没了、订阅还在"的形状，
+        // 重新挂载时 Click 会再挂一份，每次点击都是双份回调。
+        if (ClickHandlers.TryGetValue(control, out var attached) && attached is { } handler)
+        {
+            control.Click -= handler;
+            ClickHandlers.Remove(control);
+        }
+
         Callbacks.Remove(control);
     }
 
     private static void Rebind(ToolkitControls.SettingsCard control, Action? callback)
     {
-        if (!Callbacks.ContainsKey(control))
+        if (!ClickHandlers.ContainsKey(control))
         {
-            Callbacks[control] = null;
-            control.Click += (s, _) =>
+            RoutedEventHandler handler = (s, _) =>
             {
-                var card = (ToolkitControls.SettingsCard)s;
-                if (Callbacks.TryGetValue(card, out var current))
+                // 用订阅时那个引用（<c>control</c>）查表，不用回调给的 <c>sender</c>。
+                // 理由见 RadioButtonsHandler.Handlers 字段的注释。
+                if (Callbacks.TryGetValue(control, out var current))
                 {
                     current?.Invoke();
                 }
             };
+
+            control.Click += handler;
+            ClickHandlers.Set(control, handler);
         }
 
         Callbacks[control] = callback;

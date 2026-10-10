@@ -20,8 +20,11 @@ namespace Reactor.Gallery.Samples;
 /// <c>samples/uia-check.ps1</c> 会当场把这种漏网的抓出来）。
 /// </para>
 /// <para>
-/// 这里点击只改一行文字。真要打开浏览器用的是
-/// <c>Windows.System.Launcher.LaunchUriAsync</c>——那属于命令式动作，
+/// 第一个链接按官方 <c>Navigate</c> 那一档给了 <c>navigateUri</c>：它是
+/// <c>HyperlinkButton</c> 自己的属性，按下由系统拿这个 URI 去导航，
+/// <c>Click</c> 也照常来。第二个只演示 <c>Click</c>（不带 URI）。
+/// 想在点击那一刻做点别的（先存草稿、先确认），那就别给 URI，
+/// 走命令式的 <c>Windows.System.Launcher.LaunchUriAsync</c>——那属于命令式动作，
 /// 放在声明式样例里会把重点带偏。
 /// </para>
 /// </remarks>
@@ -37,7 +40,8 @@ public sealed class HyperlinkBasic : Component
                         FontIcon("\uE8A7", fontSize: 14).VAlign(VerticalAlignment.Center),
                         TextBlock("点我（内容是一棵元素树，不是纯字符串）")
                             .VAlign(VerticalAlignment.Center)),
-                    () => setVisited(true))
+                    () => setVisited(true),
+                    navigateUri: "https://www.microsoft.com")
                 .AutomationName("示例链接，点一下标记已访问"),
 
             TextBlock(visited ? "已点过一次。" : "还没点过。").Caption().Subtle(),

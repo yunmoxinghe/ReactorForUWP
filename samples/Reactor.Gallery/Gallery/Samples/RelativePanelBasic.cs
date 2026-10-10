@@ -42,22 +42,35 @@ public sealed class RelativePanelBasic : Component
                     .Caption().Subtle().VAlign(VerticalAlignment.Center)),
 
             RelativePanel(
-                    Tag("① 贴左上", Colors.SteelBlue)
+                    Tag("①", Colors.SteelBlue)
                         .Relative(alignLeftWithPanel: true, alignTopWithPanel: true),
 
-                    Tag("② 在①右边、与①顶对齐", Colors.MediumSeaGreen)
-                        .Relative(rightOf: 0, alignTopWith: 0),
+                    Tag("②", Colors.MediumSeaGreen)
+                        .Relative(rightOf: 0, alignTopWith: 0)
+                        .Margin(8, 0, 0, 0),
 
-                    Tag("③ 在①下面", Colors.Tomato)
-                        .Relative(alignLeftWith: 0, below: linked ? 0 : null),
+                    Tag("③", Colors.Tomato)
+                        .Relative(alignLeftWith: 0, below: linked ? 0 : null)
+                        .Margin(0, 8, 0, 0),
 
-                    Tag("④ 贴右下", Colors.MediumPurple)
+                    Tag("④", Colors.MediumPurple)
                         .Relative(alignRightWithPanel: true, alignBottomWithPanel: true),
 
-                    Tag("⑤ 水平居中、贴底", Colors.DarkOrange)
+                    Tag("⑤", Colors.DarkOrange)
                         .Relative(alignHorizontalCenterWithPanel: true, alignBottomWithPanel: true))
+                // 官方给的是固定宽度：RelativePanel 自己没有"内容宽度"，
+                // 不写死它，「贴右边」「贴底」那几条关系就没有边界可贴。
+                .Width(300)
                 .Height(220)
                 .WithBorder(ThemeResource.Brush("CardStrokeColorDefaultBrush")),
+
+            // 五块统一 50×50（对齐官方）。写清关系的那句话挪到这里当图例：
+            // 塞进 50×50 会撑出边框，几何反而看不清。
+            TextBlock("① 贴左上　② 在①右边、与①顶对齐（Margin 8,0,0,0）　"
+                      + "③ 在①下面（Margin 0,8,0,0）　④ 贴右下　⑤ 水平居中、贴底")
+                .Caption()
+                .Subtle()
+                .Wrap(),
 
             TextBlock("下标指的是<b>同层子元素的位置</b>（从 0 数），不是控件类型也不是名字；"
                       + "越界（删了那一格却忘了改关系）按「这条关系不成立」处理，不抛异常。")
@@ -67,6 +80,10 @@ public sealed class RelativePanelBasic : Component
     }
 
     private static Element Tag(string text, Color color) =>
-        Border(TextBlock(text).Foreground(Colors.White).Padding(6, 3))
-            .Background(color);
+        Border(TextBlock(text)
+                .Foreground(Colors.White)
+                .HAlign(HorizontalAlignment.Center)
+                .VAlign(VerticalAlignment.Center))
+            .Background(color)
+            .Size(50, 50);
 }

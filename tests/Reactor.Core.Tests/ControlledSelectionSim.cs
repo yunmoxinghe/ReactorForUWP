@@ -247,6 +247,24 @@ internal sealed class ControlledSelectionSim
     private bool _hasDeferred;
     private int _deferred;
 
+    /// <summary>
+    /// 此刻是不是<b>我们自己在写控件</b>（受控下发 / 异步回写）。
+    /// </summary>
+    /// <remarks>
+    /// 与 <c>Rebuilding</c>（判据二）同构，只是那道是给 WinUI 的
+    /// <c>UpdateItemsSource</c> 用的，这道是给我们自己的写入用的。
+    /// <para>
+    /// <b>为什么非有它不可。</b>在"未就绪"的窗口里，我们写的和用户点的
+    /// 会抛出<b>值完全相同</b>的事件 —— 例如受控目标正好是 1，我们把控件写成 1
+    /// 抛一发 <c>event 1</c>，用户把控件拨回 1 也抛一发 <c>event 1</c>。
+    /// 光看值区分不了，可两者的含义相反：前者是回声、后者是真实意图。
+    /// 少了这道旗标，"用户点回受控值"就会被当成我们写的而不记账，
+    /// 于是先前记下的那次点击<b>过期了却没作废</b>，进树时按旧意图补发，
+    /// 把用户最后的选择整个盖掉。
+    /// </para>
+    /// </remarks>
+    private bool _applying;
+
     /// <summary>进过用户回调的次数。</summary>
     public int CallbackCount { get; private set; }
 
@@ -284,8 +302,45 @@ internal sealed class ControlledSelectionSim
     /// </remarks>
     public static int RestoreWriteBackCount;
 
+    /// <summary>内部 repeater 是否已进树（早于框架的就绪标记）。</summary>
+    /// <remarks>
+    /// 真机上"repeater 进树"与"控件自身的 <c>Loaded</c> 派发到框架"是两件事，
+    /// 中间那段窗口里控件看得见、点得到、也会抛事件，但框架认为它还没就绪。
+    /// 随机序列必须能独立地开合这个窗口，否则所有"未就绪"路径都不可达。
+    /// </remarks>
+    public bool RepeaterLoaded => _ctl.IsLoaded;
+
     /// <summary>控件是否已经 Loaded（随机序列里避免重复 Load）。</summary>
     public bool IsLoaded { get; private set; }
+
+    /// <summary>
+    /// 用户最后一次"换了项、且那一刻回调在场"的点击，<b>应当</b>进 state 的那个值。
+    /// <c>-1</c> 表示当前没有这样的欠账。
+    /// </summary>
+    /// <remarks>
+    /// 见 <see cref="LastClickHonored"/>。
+    /// </remarks>
+    public int ExpectStateFromClick => _expectedFromClick;
+
+    /// <summary>
+    /// 用户最后一次"换了项、且那一刻回调在场"的点击，有没有真的进 state。
+    /// </summary>
+    /// <remarks>
+    /// <b>这一条守的是"点击凭空消失"，它是现有三条不变量的盲区。</b>
+    /// 这次（INV13）暴露得很彻底：那一发被"未就绪"吞掉后没能补发，控件随后被
+    /// 受控下发拉回旧值 —— 于是"控件的值有主人"（<see cref="Explained"/>）、
+    /// "state 与控件一致"（<see cref="Faithful"/>）、"回调不含 -1"三条<b>全部成立</b>，
+    /// 界面看着规规矩矩，只有用户知道他点的那一下没生效。
+    /// 也就是说：<b>一次丢失的点击在终态上和"用户根本没点"长得一模一样</b>，
+    /// 只看最终状态是抓不到的，必须把"用户做过什么"和"state 收到什么"对起来看。
+    /// <para>
+    /// 三个前提缺一不可：控件此刻听得见（repeater 已进树）、点在了<b>别的一项</b>上
+    /// （点当前项按设计不产生回调，INV6）、并且那一刻有人监听（没人接就不该转告，
+    /// INV10-续）。三个都成立时，那一次点击<b>必须</b>进 state，没有例外。
+    /// </para>
+    /// </remarks>
+    public bool LastClickHonored =>
+        _expectedFromClick < 0 || State == _expectedFromClick;
 
     /// <summary>
     /// 被吞掉的"取消选中"要不要把受控值纠正回来。<b>默认开</b>——它就是这次的修法。
@@ -391,6 +446,33 @@ internal sealed class ControlledSelectionSim
     /// 旗标"，于是它的执行时机永远紧跟下一次渲染，快照不可能陈旧——删掉那行也不会红。
     /// 这里把它建模成<b>独立队列 + 快照</b>，才谈得上给这道复查做反向对照。
     /// </remarks>
+    /// <summary>
+    /// 未就绪期间，用户把控件拨回受控目标时，要不要<b>作废</b>先前记下的那一发。
+    /// <b>默认开</b>——它就是 INV15 的修法。
+    /// </summary>
+    /// <remarks>
+    /// 关掉它必须红：不作废的话，进树时会按<b>已经过期</b>的旧意图补发，
+    /// 把用户最后的选择整个盖掉。用户看到的是：点 A 没反应、再点回 B，
+    /// 结果界面停在 A —— 他<b>最后那一下</b>反而是唯一生效的那个的反面。
+    /// </remarks>
+    /// <summary>
+    /// 能不能<b>认出"这一发是我们自己写的"</b>（对应真代码的 <c>Applying</c> 窗）。
+    /// <b>默认开。</b>
+    /// </summary>
+    /// <remarks>
+    /// 它是 <see cref="CancelDeferredOnPullBack"/> 的<b>前置条件</b>：
+    /// 只有先分清"这一发是我们写的还是用户拨的"，作废才不会误伤。
+    /// <para>
+    /// 关掉它必须红：认不出自己写的之后，"我们把控件写成受控值"那一发会被当成
+    /// "用户把控件拨回受控值"，于是<b>凭空作废一次根本没过期的意图</b>——
+    /// 修法反过来变成新的丢点击来源。它和 <c>CancelDeferredOnPullBack</c>
+    /// 是同一件事的两半，任一半单独存在都会出事。
+    /// </para>
+    /// </remarks>
+    public bool DetectOwnWrites { get; init; } = true;
+
+    public bool CancelDeferredOnPullBack { get; init; } = true;
+
     public bool DropStaleRestore { get; init; } = true;
 
     /// <summary>
@@ -477,6 +559,27 @@ internal sealed class ControlledSelectionSim
     }
 
     /// <summary>
+    /// 补发时"控件漂到无选中"而被放弃的次数——即 <b>INV13 那一格丢掉的点击数</b>。
+    /// </summary>
+    /// <remarks>
+    /// <b>为什么非得单独计数，光靠终态不变量不够。</b>
+    /// <see cref="LastClickHonored"/> 是<b>终态</b>判据，只检查序列跑完之后
+    /// state 有没有兑现最后一次点击。于是丢失发生在序列<b>中段</b>时，
+    /// 用户后面再点一次就把 state 拉回来了，那条不变量便<b>再也看不见它</b>
+    /// ——实测 20000×24 的序列里它只抓到 2 条，而真实丢失远多于此。
+    /// 这一格记录的是"每一次丢失本身"，与被不被后续操作掩盖无关。
+    /// <para>
+    /// 只数"控件漂到 -1"这一格：另外两种作废是合法的
+    /// （用户真改了主意 / 受控下发已经把它收敛到位），数进去会把噪声当信号。
+    /// </para>
+    /// <para>
+    /// 与 <see cref="RestoreWriteBackCount"/> 同款：静态累计，仅供反向对照读数。
+    /// 用静态而非实例属性，是因为要跨一批序列合计——单次序列的量太小，读不出趋势。
+    /// </para>
+    /// </remarks>
+    public static int DeferredLostToClearedCount;
+
+    /// <summary>
     /// 把未就绪期间记下的那一发补发给用户回调（兑现前复查）。
     /// 对应真代码 <c>ComboBoxHandler.FlushDeferred</c> / <c>RadioButtonsHandler.FlushDeferred</c>。
     /// </summary>
@@ -494,6 +597,13 @@ internal sealed class ControlledSelectionSim
 
         if (!SelectionGate.ShouldFlushDeferred(pending, _ctl.SelectedIndex, target))
         {
+            // 控件漂到"无选中"这一格才计丢失：这一发本来是补得回来的
+            // （意图在 pending 里），放弃它就是丢掉一次点击（INV13）。
+            if (_ctl.SelectedIndex < 0)
+            {
+                DeferredLostToClearedCount++;
+            }
+
             _trace.Add($"  补发收手：控件停在 {_ctl.SelectedIndex}，记下的是 {pending}");
             return false;
         }
@@ -517,13 +627,37 @@ internal sealed class ControlledSelectionSim
     {
         _trace.Add($"click {index} (cancelFirst={cancelFirst})");
         LastUserClick = index;
+
+        // 「这一次点击该不该进 state」的三个前提，必须在派发之前算：
+        // 派发之后控件的值已经被改了。
+        var audible = _ctl.IsLoaded && index >= 0 && index < _ctl.ItemCount;
+        var switches = _ctl.SelectedIndex != index;
+
         _ctl.UserClick(index, cancelFirst);
+
+        if (audible && switches && _guardActive)
+        {
+            _expectedFromClick = index;
+        }
+        else if (switches)
+        {
+            // 控件听不见（repeater 还没进树）、下标越界、或这一轮没人接：
+            // 三种情形按设计都不产生回调，此后 state 该去哪儿由别的动作说了算，
+            // 上一次点击欠下的账就此注销。
+            _expectedFromClick = -1;
+        }
+
+        // 点在当前项上（!switches）：按设计没有回调（INV6），用户也没改主意，
+        // 此前欠的账继续算 —— 所以这里不动它。
     }
 
     /// <summary>程序化改 state（模拟页面上别的按钮改了同一个 state）。</summary>
     public void SetState(int value)
     {
         _trace.Add($"setState {_state} → {value}");
+
+        // state 此后该是什么由这次程序化改动说了算，上一次点击的欠账注销。
+        _expectedFromClick = -1;
         SetStateCore(value);
     }
 
@@ -538,6 +672,10 @@ internal sealed class ControlledSelectionSim
     public void RebuildItems(int count)
     {
         _trace.Add($"rebuildItems {count}");
+
+        // 整批换过 items 之后，旧下标的意义变了（还可能直接越界），欠账注销。
+        _expectedFromClick = -1;
+
         _ctl.RebuildItems(count);
         ApplyControlled();
     }
@@ -590,6 +728,10 @@ internal sealed class ControlledSelectionSim
     /// </para>
     /// </remarks>
     public int LastUserClick { get; private set; } = -1;
+
+    /// <summary>见 <see cref="LastClickHonored"/>：此刻还欠着的那一次点击该进 state 的值。</summary>
+    private int _expectedFromClick = -1;
+
     public int? Target => _hasTarget ? _target : null;
 
     /// <summary>受控目标是否落在条目数之内（越界的 target 控件兑现不了，不参与判 deviate）。</summary>
@@ -711,7 +853,9 @@ internal sealed class ControlledSelectionSim
             _echo.Expect(_ctl, _target);
         }
 
+        _applying = true;
         _ctl.WriteControlled(_target);
+        _applying = false;
 
         if (SealEchoAfterWrite && _echo.CancelIfUnconsumed(_ctl))
         {
@@ -768,7 +912,9 @@ internal sealed class ControlledSelectionSim
             _echo.Expect(_ctl, expected);
         }
 
+        _applying = true;
         _ctl.WriteControlled(expected);
+        _applying = false;
 
         if (SealEchoAfterWrite && _echo.CancelIfUnconsumed(_ctl))
         {
@@ -844,6 +990,19 @@ internal sealed class ControlledSelectionSim
                     _deferred = value;
                     _hasDeferred = true;
                     _trace.Add($"  记下 {value}，进树后补发");
+                }
+                else if (value >= 0
+                    && !(DetectOwnWrites && _applying)
+                    && _hasDeferred
+                    && CancelDeferredOnPullBack)
+                {
+                    // 值等于受控目标 ⇒ 记不得（分不清是我们写的还是用户拨的），
+                    // 但若它<b>不是我们写的</b>，那就是用户亲手把控件拨回了受控目标
+                    // —— 他改主意了，先前记下的那一次必须作废。
+                    // 不作废的后果：进树时按<b>过期</b>的旧意图补发，
+                    // 把用户最后的选择整个盖掉（随机序列 #2478 就是这一格）。
+                    _hasDeferred = false;
+                    _trace.Add($"  用户拨回受控值 {value} → 作废记下的 {_deferred}");
                 }
             }
 

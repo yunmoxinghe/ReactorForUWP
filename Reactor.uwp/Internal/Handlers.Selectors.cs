@@ -58,6 +58,9 @@ internal abstract class SelectorHandler<TElement, TControl> : ElementHandler<TEl
     private static readonly WeakTable<TControl, bool> Rebuilding = new();
     private static readonly WeakTable<TControl, bool> RestorePending = new();
 
+    /// <summary>挂在控件上的 <c>SelectionChanged</c> 委托（Unmount 要拿它解绑）。语义与 <c>RadioButtonsHandler.Handlers</c> 一致，详见那边的注释。</summary>
+    private static readonly WeakTable<TControl, SelectionChangedEventHandler?> Handlers = new();
+
     protected abstract IReadOnlyList<Element?> ItemsOf(TElement element);
     protected abstract Optional<int> SelectedIndexOf(TElement element);
     protected abstract Action<int>? SelectionCallbackOf(TElement element);
@@ -127,6 +130,13 @@ internal abstract class SelectorHandler<TElement, TControl> : ElementHandler<TEl
     protected override void Unmount(Reconciler reconciler, TControl control)
     {
         SelectionEcho.Forget(control);
+
+        if (Handlers.TryGetValue(control, out var handler) && handler is { } attached)
+        {
+            control.SelectionChanged -= attached;
+            Handlers.Remove(control);
+        }
+
         Callbacks.Remove(control);
         Targets.Remove(control);
         Rebuilding.Remove(control);
@@ -238,19 +248,22 @@ internal abstract class SelectorHandler<TElement, TControl> : ElementHandler<TEl
 
     private static void Rebind(TControl control, Action<int>? selection)
     {
-        if (!Callbacks.ContainsKey(control))
+        if (!Handlers.ContainsKey(control))
         {
-            Callbacks.Set(control, new CallbackBox());
-            control.SelectionChanged += (s, args) =>
+            SelectionChangedEventHandler handler = (s, args) =>
             {
-                var view = (TControl)s;
-                if (Callbacks.TryGetValue(view, out var box))
+                // 用订阅时那个引用（<c>control</c>）查表，不用 <c>sender</c>。
+                // 理由见 RadioButtonsHandler.Handlers 字段的注释。
+                if (Callbacks.TryGetValue(control, out var box))
                 {
                     // 不管这一轮有没有人监听，四道判据与纠正都要跑：
                     // 它们兑现的是"受控"，不是"送达"。
-                    Dispatch(view, args, box.Selection);
+                    Dispatch(control, args, box.Selection);
                 }
             };
+
+            control.SelectionChanged += handler;
+            Handlers.Set(control, handler);
         }
 
         // 整只盒子换掉，而不是"取出来改字段"：后者在源码扫描里会长成一处

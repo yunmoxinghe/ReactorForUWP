@@ -71,7 +71,7 @@ public sealed class NavigationViewBasic : Component
                     // 刻意把"切紧凑"的门槛抬高：窗口收窄时更早变成图标条。
                     // 只给这一个，另一个留 null（用控件自己的默认）。
                     compactModeThresholdWidth: 900)
-                .Height(260)
+                .Height(460)
                 .WithBorder(ThemeResource.Brush("CardStrokeColorDefaultBrush")),
 
             HStack(8,

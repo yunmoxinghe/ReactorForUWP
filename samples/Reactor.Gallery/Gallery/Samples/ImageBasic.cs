@@ -15,7 +15,7 @@ namespace Reactor.Gallery.Samples;
 ///   <item><c>Uniform</c>：等比缩放<b>整张都放进</b>容器，短边留白（默认值）。</item>
 ///   <item><c>UniformToFill</c>：等比缩放<b>填满</b>容器，长边被裁掉。</item>
 /// </list>
-/// 三格都套在同一个 120×120 的框里，旁边写着各自的取舍，比分开看三个图清楚。
+/// 三格都套在同一个 100×100 的框里，旁边写着各自的取舍，比分开看三个图清楚。
 /// <para>
 /// <b>尺寸要么给全、要么都不给。</b>只给 <c>Width</c> 不给 <c>Height</c> 时，
 /// <c>Uniform</c> 会按宽度算出高度，通常正是想要的；反过来在
@@ -25,12 +25,14 @@ namespace Reactor.Gallery.Samples;
 /// </remarks>
 public sealed class ImageBasic : Component
 {
-    private const string Source = "ms-appx:///Assets/Square150x150Logo.scale-100.png";
+    // 官方用 treetops.jpg（横向照片）；本地素材由 tools/parity/make_sample_media.py 生成。
+    // 故意用非正方形的图：正方形源图在 100×100 的框里看不出三档 Stretch 的差别。
+    private const string Source = "ms-appx:///Assets/SampleMedia/treetops.png";
 
     public override Element Render()
     {
         return VStack(12,
-            TextBlock("源图 150×150，框 120×120").Caption().Subtle(),
+            TextBlock("源图 400×267，框 100×100（官方那一档，图是本地生成的替代素材）").Caption().Subtle(),
 
             HStack(12,
                 Cell("None", "原图尺寸溢出", Image(Source, stretch: "None")),
@@ -53,7 +55,6 @@ public sealed class ImageBasic : Component
             TextBlock(title).Caption().Subtle(),
             Border(image)
                 .WithBorder(ThemeResource.Brush("CardStrokeColorDefaultBrush"), 1)
-                .Width(120)
-                .Height(120),
-            TextBlock(note).Wrap().MaxWidth(120).Caption().Subtle());
+                .Size(100, 100),
+            TextBlock(note).Wrap().MaxWidth(100).Caption().Subtle());
 }
